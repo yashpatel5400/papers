@@ -1,0 +1,1104 @@
+% SIAM Article Template
+\documentclass[review,onefignum,onetabnum]{siamonline171218}
+
+% Information that is shared between the article and the supplement
+% (title and author information, macros, packages, etc.) goes into
+% ex_shared.tex. If there is no supplement, this file can be included
+% directly.
+
+\input{ex_shared}
+
+% Optional PDF information
+\ifpdf
+\hypersetup{
+  pdftitle={Robust Functional Predict-Then-Optimize},
+  pdfauthor={Y. Patel and A. Tewari}
+}
+\fi
+
+% The next statement enables references to information in the
+% supplement. See the xr-hyperref package for details.
+
+%% Use \myexternaldocument on Overleaf
+\myexternaldocument{ex_supplement}
+
+% FundRef data to be entered by SIAM
+%<funding-group>
+%<award-group>
+%<funding-source>
+%<named-content content-type="funder-name"> 
+%</named-content> 
+%<named-content content-type="funder-identifier"> 
+%</named-content>
+%</funding-source>
+%<award-id> </award-id>
+%</award-group>
+%</funding-group>
+
+\begin{document}
+
+\maketitle
+
+% REQUIRED
+\begin{abstract}
+    The solution of PDEs in decision-making tasks is increasingly being undertaken with the help of neural operator surrogate models due to the need for repeated evaluation. Such methods, while significantly more computationally favorable compared to their numerical counterparts, fail to provide any calibrated notions of uncertainty in their predictions. Current methods approach this deficiency typically with ensembling or Bayesian posterior estimation. However, these approaches either require distributional assumptions that fail to hold in practice or lack practical scalability, limiting their applications in practice. We, therefore, propose a novel application of conformal prediction to produce distribution-free uncertainty quantification over the function spaces mapped by neural operators. We then demonstrate how such prediction regions enable a formal regret characterization if leveraged in downstream robust decision-making tasks. We further demonstrate how such posited robust decision-making tasks can be efficiently solved using an infinite-dimensional generalization of Danskin's Theorem and calculus of variations and empirically demonstrate the superior performance of our proposed method over more restrictive modeling paradigms, such as Gaussian Processes, across several engineering tasks.
+    % We then demonstrate the superior empirical performance of MFCP over competitors in a suite of scientifically interesting tasks, specifically in the uncertainty quantification of fluid flows.
+\end{abstract}
+
+% REQUIRED
+\begin{keywords}
+  example, \LaTeX
+\end{keywords}
+
+% REQUIRED
+\begin{AMS}
+  68Q25, 68R10, 68U05
+\end{AMS}
+
+\section{Introduction}\label{section:intro}
+% Shape optimization is an often used instance of PDE-constrained optimization, in which a design is sought that optimizes a property whose evaluation requires solving a partial differential equation \cite{sokolowski1992introduction,hsu1994review,challis2009level,dunning2015introducing}. 
+PDE-informed decision-making, where underlying understood dynamics are simulated to select an optimal downstream decision, is a heavily employed framework in practice, including in enhanced oil recovery \cite{keil2022adaptive} and carbon sequestration \cite{nghiem2009simulation, zhang2012numerical}. 
+% Such problems, in turn, require solving such PDEs over iteratively adapted designs, often resulting in computationally intractable optimization procedures \cite{feppon2020}. This, in turn, forces engineers to restrict the space of designs over which optimization is performed to produce solutions in reasonable timeframes, resulting in suboptimal designs.
+Such problems classically rely on numerical methods to solve the modeled PDEs, which do not lend themselves well to repeated simulation across many, even slightly perturbed initial conditions, as numerical methods fail to amortize computation across such setups. For this reason, there has been interest in leveraging accelerated surrogate PDE solvers over such an optimization procedure. Neural operators have emerged as one such potential surrogate model \cite{pathak2022fourcastnet,wen2022accelerating,bonev2023spherical}. 
+% In fact, such models have already been leveraged in design workflows \cite{azizzadenesheli2024neural,augenstein2023neural,jiang2023fourier,zhou2024ai,alhashim2024engineering}.
+Neural operators amortize the cost traditionally associated with numerical solvers by instead learning a parametric ``flow map'' $\mathcal{F}(a)$ such that the solution associated with the relevant input system condition $a$ can be inferred. 
+
+While such methods are attractive for their reduced computational cost, such methods fail to produce calibrated notions of uncertainty in their predictions, thus prompting recent interest in augmenting current systems to do so \cite{zou2023hydra,psaros2023uncertainty,zhu2019physics,martina2021bayesian,tripathy2018deep}. Such uncertainty quantification methods, however, rely on distributional assumptions, whose utility fail with distributional misspecification \cite{sahin2024deep,mollaali2023physics}. For this reason, recent efforts have been directed towards distribution-free, data-driven approaches to uncertainty quantification leveraging conformal prediction \cite{gopakumar2024valid,ma2024calibrated}, a principled framework for producing distribution-free prediction regions with marginal frequentist coverage guarantees \cite{angelopoulos2021gentle, shafer2008tutorial}. This initial work, however, ultimately only obtains coverage guarantees on the observed discretized grid evaluation of the function, making no claims on functional coverage that is typically of interest.
+
+In addition, given that such initial works have yet to establish formal coverage claims on the underlying function, they too
+% Such initial efforts, however, 
+have yet to explore the utility of functional coverage in downstream applications. Recent works have demonstrated in parallel studies that leveraging conformal prediction for robust decision-making problem specification results in solutions with theoretical regret guarantees and improved empirical performance over non-data-driven alternatives \cite{patel2024conformal, patel2024conformallinear,cao2024non}. We, therefore, seek to extend the line of distribution-free uncertainty quantification for operator models in a manner that lends itself to efficient downstream decision-making. Notably, this work also serves to extend the robust predict-then-optimize line of work to consider infinite-dimensional function spaces. Our contributions, therefore, are as follows:
+
+\begin{itemize}
+    \item Proposing a conformal prediction method for operator methods that provides formal coverage guarantees over functions.
+    \item Demonstrating the use of the resulting functional prediction regions to provide regret guarantees in a downstream robust decision-making task.
+    \item Providing an efficient optimization procedure to solve the resulting robust formulation using an infinite-dimensional generalization of Danskin's Theorem and calculus of variations.
+    % , proving properties of the conformal score function that enable the use of a generalization of Danskin's Theorem to infinite-dimensional function spaces.
+    % framework (MFCP) to conformalize operators with calibration samples of differing fidelities to produce prediction regions with valid coverage guarantees.
+    % to enable efficient integration with engineering design loops.
+    \item Demonstrating the utility of the proposed robust framework across a suite of engineering tasks.
+\end{itemize}
+
+\section{Background}\label{section:background}
+Throughout the exposition, functions are referenced in both their nonparametric and expanded basis representations; we distinguish these by a vector symbol, i.e. $u : \Omega\rightarrow\mathbb{R}$ is the nonparametric convention whereas $\vec{u}\in\mathbb{R}^{K}$ is a (truncated) basis representation, where $u := \sum_{k} \vec{u}_{k} \phi_{k}$ for some specified $\{\phi_{k}\}$ basis set. We index over vector components with subscripts and samples with parenthetical superscripts, i.e. $\vec{u}^{(i)}_{k}$ is the $k$-th component of the $i$-th data sample. We additionally use $\mathcal{B}^{||\cdot||}_{r}(x)$ to denote the open $r$-radius ball around $x$ in the $||\cdot||$ norm and $\mathcal{B}^{||\cdot||}_{r}[x]$ to denote the corresponding closed ball.
+
+\subsection{Conformal Prediction}\label{section:bg_cp}
+Conformal prediction is a principled, distribution-free approach of uncertainty quantification \cite{angelopoulos2021gentle, shafer2008tutorial}. ``Split conformal,'' the most common variant of conformal prediction, is used as a wrapper around black-box predictors $\widehat{f} : \mathcal{X}\rightarrow\mathcal{Y}$ such that prediction \textit{regions} $\mathcal{C}(x)$ are returned in place of the typical point predictions $\widehat{f}(x)$. Prediction regions $\mathcal{C}(x)$ are specifically sought to have coverage guarantees on the true $y := f(x)$. That is, for some prespecified $\alpha$, we wish to have $\mathcal{P}_{X,Y}(Y\in \mathcal{C}(X))\ge1-\alpha$.
+
+To achieve this, split conformal partitions the overall dataset $\mathcal{D}$ into two subsets, $\mathcal{D}_{T}\cup\mathcal{D}_{C}$, respectively the training and calibration datasets. The training dataset is used in the standard manner to fit $\widehat{f}$. After fitting $\widehat{f}$, the calibration set is used to measure the anticipated ``prediction error'' for future test points. Formally, this error is quantified via a score function $s(x,y)$, which generalizes the classical notion of a residual. In particular, scores are evaluated on the calibration dataset to define $\mathcal{S} := \{s(x,y)\mid (x,y)\in\mathcal{D}_{C}\}$. Denoting the $\ceil{(N_{C}+1)(1-\alpha)}/N_{C}$ empirical quantile of $\mathcal{S}$ as $\widehat{q}$, where $N_{C} := |\mathcal{D}_{C}|$, conformal prediction defines $\mathcal{C}(x)$ to be $\{y \mid s(x, y) \le \widehat{q}\}$. Such $\mathcal{C}(x)$ satisfies the aforementioned coverage guarantees under the exchangeability of future test points $(x',y')$ with points in $\mathcal{D}_{C}$.
+
+While the coverage guarantee holds for any arbitrarily specified score function, the conservatism of the resulting prediction region, known as the procedure's ``predictive efficiency,'' is dependent on its choice \cite{shafer2008tutorial}. The practical objective of conformal prediction, therefore, is to define score functions that retain coverage while minimizing the resulting prediction region size. 
+
+\subsection{Predict-Then-Optimize}\label{section:bg_pred_opt}
+We present a summary of the application of conformal prediction to predict-then-optimize problems, specifically from \cite{patel2024conformal}. Predict-then-optimize problems are nominally formulated as
+\begin{equation}\label{eqn:nominal_po}
+\begin{aligned}
+w^{*}(x) := \min_{w\in\mathcal{W}} \quad & \mathbb{E}[f(w, C)\mid X],
+% \textrm{s.t.} \quad & w, \\
+\end{aligned}
+\end{equation}
+where $w$ are decision variables, $C$ an \textit{unknown} cost parameter, $x$ observed contextual variables, $\mathcal{W}$ a compact feasible region, and $f(w, c)$ an objective function that is convex-concave and $L$-Lipschitz in $c$ for any fixed $w$. The nominal approach defines a predictor $\widehat{g} : \mathcal{X}\rightarrow\mathcal{C}$, where the prediction $\widehat{c} := \widehat{g}(x)$ is directly leveraged in the downstream optimization task, i.e. taking $w^{*} := \min_{w} f(w, \widehat{c})$. 
+
+
+Such an approach, however, is inappropriate in safety-critical settings, given that the predictor function $\widehat{g}$ will likely be misspecified and, thus, may result in suboptimal decisions under the true cost parameter, which we denote as $c$. For this reason, robust alternatives to the formulation given by \Cref{eqn:nominal_po} have become of interest. We focus on the formulation posited in \cite{patel2024conformal}, which extended the line of work begun in \cite{chenreddy2022data,sadana2024survey,chenreddy2024end}. In particular, they studied 
+\begin{equation}\label{eqn:reform_obj}
+\begin{gathered}
+w^{*}(x) := \min_{w} \max_{\widehat{c}\in\mathcal{U}(x)} \quad f(w, \widehat{c}) \\
+\quad \textrm{s.t.} \quad \mathcal{P}_{X,C}(C\in\mathcal{U}(x)) \ge 1-\alpha,
+\end{gathered}
+\end{equation}
+where $\mathcal{U} : \mathcal{X}\rightarrow\mathcal{F}$ is a uncertainty region predictor, with $\mathcal{F}$ being the $\sigma$-field of $\mathcal{C}$. Works in this field typically focus on both theoretically characterizing and empirically studying the resulting suboptimality gap, defined as
+$\Delta(x, c) := \min_{w} \max_{\widehat{c}\in\mathcal{U}(x)} f(w, \widehat{c}) - \min_{w} f(w, c)$. 
+For instance,
+in \cite{patel2024conformal}, $\mathcal{U}(x)$ was specifically constructed via conformal prediction to provide probabilistic guarantees; that is, by
+taking $\mathcal{U}(x) := \mathcal{C}(x)$ to be the prediction region produced by conformalizing a predictor $q : \mathcal{X}\rightarrow\mathcal{C}$, they demonstrated $\mathcal{P}_{X,C}\left(0\le \Delta(X, C) \le L \mathrm{\ diam}(\mathcal{U}(X))\right) \ge 1 - \alpha$. 
+
+\subsection{Sobolev Spaces}\label{section:sobolev_spaces}
+The study of numerical simulation of PDEs is a mature field. We, therefore, only provide a brief introduction to the topic, referring readers to the book \cite{brezis2011functional} for an excellent treatment of the relevant materials. Differential problems are posited in the form
+\begin{equation}
+    D u(x) = f(x)\quad x\in\Omega
+    \qquad u(x) = 0\quad x\in\partial\Omega,
+\end{equation}
+where $\Omega\subset\mathbb{R}^{d}$ is a compact domain, $f,u : \mathbb{R}^{d}\rightarrow\mathbb{R}$ are scalar fields, and $D$ is a differential operator. The existence and uniqueness of a solution $u$ to such a posited PDE can then often be established under particular choices of differential operators. Such characterizations are made over Sobolev spaces, defined as those functions with bounded Sobolev norm, i.e. $\mathcal{W}^{s,p}(\Omega) := \{u : || u ||_{\mathcal{W}^{s,p}(\Omega)} < \infty\}$, where
+\begin{equation}\label{eqn:sobolev_norm}
+    \begin{gathered}
+        || u ||_{\mathcal{W}^{s,p}(\Omega)} := \sum_{\alpha\in\Lambda_{\le s}} || \partial_{x}^{\alpha} u ||_{\mathcal{L}^{p}(\Omega)}^{p}\\
+        \Lambda_{\le s} := \{\alpha\in\mathbb{N}^{d} : |\alpha|\le s\}.
+        % , \alpha_{i}\le\alpha_{j} \quad\forall i\le j \}.
+    \end{gathered}
+\end{equation}
+Note that we employ the common condensed notation $\partial_{x}^{\alpha} u := \partial_{x_{1}}^{\alpha_{1}} ...\partial_{x_{d}}^{\alpha_{d}} u$ for $\alpha := (\alpha_{1},...,\alpha_{d})$. Since all partials are with respect to $x$ in this manuscript, we condense the notation further and simply denote this operator as $\partial^{\alpha}$. Thus, $\Lambda_{\le s}$ is the set of all mixed partials up to order $s$. Important to note is that permutations of partials \textit{are} included in $\Lambda_{\le s}$, i.e. if $d=2$, $\Lambda_{\le 2}$ includes both $\partial^{1}_{1}\partial^{1}_{2}$ and $\partial^{1}_{2}\partial^{1}_{1}$.
+% , i.e. for $\alpha = (\alpha_{1},...,\alpha_{d})$, $\partial^{\alpha} u = \partial_{\alpha_{1}}...\partial_{\alpha_{d}} u$. Note that the 
+
+Notably, this space assumes a Hilbert structure in the special case of $p=2$, which we denote as $\mathcal{H}^{s}(\Omega) := \mathcal{W}^{s,2}(\Omega)$. For instance, in the following boundary value problem
+\begin{equation}
+    -u'' + u = f \quad x\in(0,1)
+    \qquad u(0) = u(1) = 0,
+\end{equation}
+it can be shown that, for any $f\in\mathcal{L}^{2}(0,1)$, there exists a unique solution $u\in\mathcal{H}^{1}(0,1)$ to this problem. Solutions to such problems can often then be bounded in Sobolev norm in terms of functions used in problem specification, $f$ in this setup, an explicit example of which we defer to \Cref{section:bounded_norm_setup} due to space limitations. Such results are widespread in the study of PDEs, whose full presentation we defer to the aforementioned textbooks.
+
+\subsection{Neural Operators}\label{section:neural_operators}
+Despite extensive study, the solution of PDEs remains a task that can only be analytically performed in a highly restricted family of problems. For this reason, practitioners are often forced to rely on numerical methods for solution, the main approaches of which fall into one of three categories: finite-difference, finite-element, or spectral methods. While such approaches vary widely in their solution strategies, they share the common property that even minutely different problem specifications from the same PDE setup require resolving the system ab initio.
+
+For this reason, there has been a recent surge in interest in leveraging machine learning to learn the solution operator between PDE problem specification and the solution function. Inputs, while not necessarily always the case, are often a specification of the initial conditions and the output the evolved state. Most abstractly, the operator learning problem can be then formulated as seeking to learn a map $\mathcal{G} : \mathcal{A}\rightarrow\mathcal{U}$ between two function spaces $\mathcal{A}$ and $\mathcal{U}$, where observations $\mathcal{D}:=\{(a_i, u_i)\}$ have been made. We assume that there exists some true operator $\mathcal{G}^{\dagger}$ such that $u = \mathcal{G}^{\dagger}(a)$. While many different learning-based approaches have been proposed to solve this learning problem, they all can be abstractly framed as seeking to recover this true map, formally
+\begin{equation}\label{eqn:operator_obj}
+    \min_{\mathcal{G}} ||\mathcal{G} - \mathcal{G}^{\dagger}||^{2}_{\mathcal{L}^{2}(\mathcal{A},\mathcal{U})}
+    = \int_{\mathcal{A}} ||\mathcal{G}(a) - \mathcal{G}^{\dagger}(a)||_{\mathcal{U}}^{2} da.
+\end{equation}
+Within this broad family of operator learning, there exist many approaches, generally paralleling the structures of the classical numerical approaches. For instance, the class of Fourier Neural Operators (FNOs) and its variants extend the finite-difference line of methods \cite{li2020neural,li2020multipole,li2020fourier,bonev2023spherical}. We, however, focus herein on those operator methods that extend the traditional spectral approaches \cite{fanaskov2023spectral,wu2023solving,du2023neural,liu2023spfno}. Such methods amortize classical spectral methods, which posit that the solution function can be decomposed as $u := \sum_k u_k \phi_k$ for some pre-specified $\{\phi_k\}$ orthonormal functional basis and solve for the corresponding $\{u_k\}$ coefficients. We focus herein on the Legendre polynomial basis, typically used for bounded, aperiodic domains. The truncated basis expansion satisfies
+% Bases that are commonly employed include Fourier bases for periodic domains and Chebyshev or Legendre polynomials for bounded, aperiodic domains. In all such cases, the truncated basis expansion is
+\begin{equation}\label{eqn:spectral_decomp}
+    \vec{u} = \min_{\widetilde{u}\in\mathbb{R}^{K}} \left|\left| \sum_{k=1}^{K} \widetilde{u}_k \phi_k - u \right|\right|_{\mathcal{L}^2(\Omega)}.
+\end{equation}
+In this setting, therefore, the generally posed neural operator objective of \Cref{eqn:operator_obj} reduces to a simple vector-to-vector regression loss over the spectral representations of $a_i$ and $u_i$. That is, we assume the existence of spectral decompositions for each, which we denote $\vec{a}^{(i)},\vec{u}^{(i)}\in\mathbb{R}^{K}$, and train a map $\mathcal{F} : \mathbb{R}^{K}\rightarrow\mathbb{R}^{K}$ on the resulting dataset.
+
+\subsection{Related Works}\label{section:related_works}
+We now discuss the existing works that have studied conformal prediction over neural operators. The only work the authors are aware of in this vein is \cite{ma2024calibrated}. In this work, we assume the calibration dataset consists of samples observed at $S$ different spatial resolutions, $\mathcal{D_C} = \cup_{i=1}^{H} \mathcal{D}_{C}^{(h_i)}$. From here, they proceeded in the standard approach described in \Cref{section:bg_cp} using a normalized $\mathcal{L}^2$ score evaluated with the coarsest mesh discretization across \textit{all} samples. While this approach does retain coverage guarantees if the mesh observed at test time is a subset of those observed in calibration, it fails to provide any coverage guarantees on the underlying function.
+
+We additionally review the use of function mappings in downstream decision-making, specifically in kriging. In this setup, we assume a ``resource'' is to be maximally accrued with the placement of facilities within a predefined coverage radius $r$. A full review of such problems is available at \cite{wei2015continuous}. The placement of such facilities is typically predicated on the geospatially predicted demand of the resource, such as that of electric vehicles \cite{huang2016design}, natural disaster relief \cite{yang2020continuous}, or Wi-Fi \cite{fajardo2018placing}. We consider the simplified problem setup where only a \textit{single} facility is to be placed. Traditionally, such objectives were considered over discretized GIS (Geographic Information System) data \cite{megiddo1983maximum}; we, however, are interested in the continuous counterpart to this classical problem setup.
+% In the proceeding discussion, we focus on functionals with a particular structure, namely those in a subdomain of spatial optimization known as continuous space maximal coverage problems, 
+% % namely those in the subdomain of spatial optimization known as location-allocation, 
+% namely where 
+
+\section{Method}\label{section:method}
+We now introduce a procedure for performing uncertainty quantification via conformal prediction over a function space for a particular, broadly encountered family of PDEs and the use of the resulting prediction regions in spatial robust decision-making tasks. 
+% We specifically demonstrate how particular choices in the conformal prediction procedure discussed in \Cref{section:func_score} are necessary to ensure coverage and feasibility of solution.
+
+\subsection{Functional Score Function}\label{section:func_score}
+For notational clarity, we will heretofore condense the norm notation to only indicate the index of the Sobolev space, i.e. we will denote $|| \cdot ||_{\mathcal{H}^{s}(\Omega)}$ simply as $|| \cdot ||_{s}$. We assume a PDE is posited in standard form over a compact domain $\Omega$, such that the solution function is known to lie in the Sobolev space $\mathcal{H}^{s}(\Omega)$ for some $s\ge 2$ with norm bounded by some known constant $|| u ||_{s}\le M$, which encompasses a broad family of problem setups, as discussed in \Cref{section:sobolev_spaces}.
+% Such bounds are often similarly characterized from the PDE specification, as discussed in \Cref{section:sobolev_spaces}. 
+% We further restrict ourselves to the cases where $s\ge2$, which encompasses a broad family of problem setups, as discussed in \Cref{section:sobolev_spaces}.
+We retain the notational convention of \Cref{section:neural_operators} and assume a \textit{spectral} neural operator $\mathcal{F}$ has been trained to map spectral decompositions over Legendre polynomials $\{\phi_{k}(x)\}$ of input functions $\vec{a}\in\mathbb{R}^{K}$ to corresponding output decompositions $\vec{u}\in\mathbb{R}^{K}$. We further suppose calibration pairs $\mathcal{D}_{C} := \{(\vec{a}^{(i)}, \vec{u}^{(i)})\}$ are available and seek to provide probabilistic coverage guarantees on unobserved future test mappings. 
+
+One crucial detail that distinguishes conformal guarantees in functional settings versus others is that the outputs in this space are fundamentally only \textit{partially} observable. That is, functions are not directly observable: only discrete samplings, either as direct evaluations in the input domain or a truncated basis representation, can be observed. We, however, seek to provide coverage guarantees on the \textit{full} function, i.e. where the basis expansion is not truncated. For this reason, we consider the following score function
+\begin{equation}\label{eqn:score_func}
+    s(\vec{a}, \vec{u}) := \left|\left| \sum_{k=1}^{K} (\mathcal{F}(\vec{a})_{k} - \vec{u}_{k}) \phi_{k} \right|\right|_{\floor{s/2}}.
+\end{equation}
+Critical to note is that the score was defined using the $\floor{s/2}$-Sobolev norm was used rather than the seemingly more natural choice of the $s$-Sobolev norm. This is necessary to guarantee asymptotic coverage of the true function, as we formalize below. 
+
+\begin{theorem}\label{thm:func_cov}
+    Let $\mathcal{D}_{C} := \{(\vec{A}^{(i)}, \vec{U}^{(i)})\}_{i=1}^{N_C}$ with $\mathcal{D}_{C}\cup(A', U')\overset{iid}{\sim}\mathcal{P}(A, U)\in\mathcal{H}^{s}(\Omega)\times\mathcal{H}^{s}(\Omega)$ for a compact $\Omega\subset\mathbb{R}^{d}$. Further assume there exists $M$ such that for any $u\in\mathrm{Supp}(\mathcal{P}(U))$, $|| u ||_{s}\le M$. Further, let $\{(\vec{A}^{(i)}, \vec{U}^{(i)})\}\cup(\vec{A}', \vec{U}')\in\mathbb{R}^{K}\times\mathbb{R}^{K}$ denote the corresponding truncated spectral projections per \Cref{eqn:spectral_decomp}. Let $\alpha\in(0,1)$ and $\widehat{q}$ be the $\ceil{(N_{C}+1)(1-\alpha)}/N_{C}$ quantile of \Cref{eqn:score_func} over $\mathcal{D}_{C}$. Then, there exists $C > 0$ such that
+    \begin{equation}\label{eqn:coverage_guarantee}
+        \mathcal{P}\left(\left|\left| \sum_{k=1}^{K} \mathcal{F}(\vec{A}')_{k} \phi_{k} - U' \right|\right|_{\floor{s/2}}\le\widehat{q} + C K^{-1/2}\right) \ge 1-\alpha.
+    \end{equation}
+\end{theorem}
+
+Note that the statement of \Cref{eqn:coverage_guarantee} is made directly on $u'$, \textit{not} on its finite spectral projection, i.e. not on $\sum_{k=1}^{K} \vec{u}_{k}' \phi_k$. The two terms of the probabilistic bound respectively result from standard results from the finite-dimensional conformal prediction procedure and convergence results of Legendre polynomials from classical approximation results of spectral methods, the latter of which required we take $\floor{s/2}$ in \Cref{eqn:score_func} to ensure decay as $K\rightarrow\infty$. We defer the presentation of the full proof to \Cref{section:coverage_guarantee}. 
+
+The implication of this statement is that the typical conformal quantile can guarantee coverage on the underlying function if augmented with an additional, finite margin, whose decay we can characterize with a ``more complete'' observation of the function, i.e. with larger $K$. Intuitively, with observation of the full function, i.e. when $K\rightarrow\infty$, this margin becomes zero. We denote this margin-padded quantile as $\widehat{q}^{*} := \widehat{q} + CK^{-1/2}$, for which the corresponding prediction region $\mathcal{C}^{*}(\vec{a}) := \mathcal{B}^{||\cdot||_{\floor{s/2}}}_{\widehat{q}^{*}}[\mathcal{F}(\vec{a})]$ has coverage guarantees per \Cref{eqn:coverage_guarantee}. We proceed through the remaining sections assuming recovery of $\mathcal{C}^{*}(\vec{a})$; future work may wish to investigate principled approaches for empirically arriving at this margin.
+
+Before doing so, we briefly discuss why this discussion was restricted to spectral neural operators rather than being more broadly framed for nonparametric operator methods, such as FNOs. The aforementioned bound critically relied on a decomposition into the finitely observable function representation and the unobservable infinite remainder. In a nonparametric representation, finite observations correspond instead to finite samplings $\{x_{k}\}\subset\Omega$. The issue, therefore, stems from the inability to subsequently bound the function on the remaining, unobserved points of the domain. As a result, claims of coverage can only be given as asymptotic statements, that is, in the limiting cases of $\Delta x\rightarrow 0$. Such coverage, however, then effectively reduces to assuming the true function $u$ is directly observed, which we sought to avoid for practical applicability.
+
+\subsection{Predict-Then-Optimize}\label{section:func_pred_opt}
+We now seek to leverage the prediction regions produced from the aforementioned conformalized operator to make guarantees on decisions made downstream from such predictors. That is, we specifically focus on the following robust predict-then-optimize problem
+\begin{equation}\label{eqn:robust_func_pred_opt}
+    w^{*}(\vec{a}) := \min_{w\in\mathcal{W}} \max_{\widehat{u}\in\mathcal{C}^{*}(\vec{a})} J[w, \widehat{u}],
+\end{equation}
+where $\mathcal{W}\subset\mathbb{R}^{d}$ and $J$ is a convex-concave functional that is $L$-Lipschitz in $f$ for any fixed $u$. 
+% One critical detail that again distinguishes the functional from the standard robust formulation is the necessity to specify the space over which $\mathcal{C}(\theta)$ is taken.
+Similar to previous robust predict-then-optimize works leveraging conformal guarantees, we can characterize the resulting suboptimality in this setting, namely
+\begin{equation}
+    \Delta(\vec{a}, u) := \min_{w\in\mathcal{W}} \max_{\widehat{u}\in\mathcal{C}^{*}(\vec{a})} J[w, \widehat{u}] - \min_{w\in\mathcal{W}} J[w, u].
+\end{equation}
+
+\begin{lemma}\label{lemma:suboptimality_guarantee}
+    Consider any $J[w, u]$ that is $L$-Lipschitz in $u$ under the metric $||\cdot||_{\floor{s/2}}$ for any fixed $w$. Suppose $\mathcal{D}_C, (A', U'), (\vec{A}', \vec{U}'), \alpha, \widehat{q}$, and $C$ are defined as stated in \Cref{thm:func_cov}. Then
+    \begin{equation}
+        \mathcal{P}\left(0 \le \Delta(\vec{A}',U') \le L (\widehat{q} + C K^{-1/2})\right) \ge 1 - \alpha.
+    \end{equation}
+\end{lemma}
+
+\subsection{Optimization Algorithm}\label{section:opt_alg}
+We now focus on the setting where the functional $J[w, u]$ corresponds to the aforementioned spatial collection problem. Formally, we seek to maximally collect some resource whose spatial distribution is modeled by some spatial field $u : \Omega\subset\mathbb{R}^{d}\rightarrow\mathbb{R}$ by placing a ``well'' at some location $w\in\Omega$. Such a problem can be specified with the following functional
+% as the following min-max optimization problem:
+\begin{equation}\label{eqn:collection_prob}
+\begin{aligned}
+J[w, u] := \int_{\mathcal{B}_{r}(w)} u(x) dx
+% w^{*}(\theta) := \argmin_{w\in\mathcal{W}} \max_{\widehat{u}\in\mathcal{C}(\theta)} \int_{\mathcal{B}_{r}(w)} \widehat{u}(x) dx,
+\end{aligned}
+\end{equation}
+where $\mathcal{B}_{r}(w)\subset\Omega$ is a 2-norm ball of fixed radius $r$ around the decision variable $w\in\Omega$. Note that $\mathcal{W} := \Omega$ in this setup. Such a formulation is linear in $u$ for any fixed $w$, by which the conditions of \Cref{lemma:suboptimality_guarantee} are satisfied, in turn motivating the solution of the corresponding robust variant.
+% Traditional approaches to solving this problem involved solving the discretized formulation, though even such methods fail to have strong guarantees, given that the discrete problem is known to be NP-hard. 
+
+% is \textit{linear} in $u$ and is to be solved in its robust variant, as framed in the preceding section, using gradient-based techniques. Such a class of problems is widely encountered in applications of spatial kriging, where the functional takes the form $J[w, u] := \int_{\mathcal{B}_{r}(w)} u(x) dx$, where the optimal placement of some ``collection well'' $w$ is sought to maximally accumulate some resource modeled by the spatial field $u : \Omega\rightarrow\mathbb{R}$. A more extensive discussion of this setup is given in \Cref{section:problem_setup}.
+To do so, we seek to leverage gradient-based optimization strategies. Recent interest has emerged in the use of gradient-based optimization to solve the nominal formulation of \Cref{eqn:collection_prob} \cite{yakovlev2023maximum,yakovlev2022mathematical}, motivating our extension thereof to the robust case. Previous works in the robust predict-then-optimize space leveraged Danskin's Theorem to solve this optimization problem. In this setting, we must first prove an extension of Danskin's Theorem that lends itself to the maximization being defined over an infinite-dimensional function space. In particular, we appeal to the generalization of \cite{ulbrich2024generalized} and demonstrate it holds in our setting. The technical details of this proof largely focus on demonstrating the topological properties of $\mathcal{H}^{s}(\Omega)$ lend themselves to well-defined gradients and that the functional $J[w, u]$ satisfies desired smoothness properties. 
+
+Doing so, however, critically requires one modification to the initially posited problem to satisfy a required condition that the maximization set be compact. Naively maximizing over $\mathcal{B}^{||\cdot||_{\floor{s/2}}}_{\widehat{q}^{*}}[\mathcal{F}(\vec{a})]$ in the space $\mathcal{H}^{\floor{s/2}}$ does not satisfy this condition as, by the classic Heine-Borel Theorem, closed balls are compact in a Banach space if and only if the space is finite-dimensional. By the Sobolev embedding theorem, however, $\mathcal{B}^{||\cdot||_{\mathcal{H}^{k+\beta}(\Omega)}}_{\widehat{q}}[\mathcal{F}(\theta)]$ is compact in $\mathcal{H}^{k}(\Omega)$ for any $\beta > 0$. 
+
+We, thus, instead maximize in the space $\mathcal{H}^{\floor{s/2}-1}(\Omega)$. The utility of the solution of this altered problem depends on its relation to the originally posed problem, which we now formally demonstrate are equivalent below. The proof is deferred to \Cref{section:suboptimalty_gap}.
+
+\begin{lemma}\label{lemma:equiv_compact}
+    Let $J : \Omega\times\mathcal{H}^{\floor{s/2}}(\Omega)\rightarrow\mathbb{R}$, where $\Omega\subset\mathbb{R}^{d}$. Then, for any $\widehat{q}\in\mathbb{R}$,
+    \begin{equation*}
+        \min_{w\in\Omega} \max_{\substack{
+            u\in\mathcal{H}^{\floor{s/2}}(\Omega) \\
+            || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}
+        }} J[w, \widehat{u}] 
+        =
+        \min_{w\in\Omega} \max_{\substack{
+            u\in\mathcal{H}^{\floor{s/2}-1}(\Omega) \\ 
+            || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}}
+        } J[w, \widehat{u}].
+    \end{equation*}
+\end{lemma}
+
+% Recall that the choice of the score as per \Cref{eqn:ideal_score} was critical to ensure $\mathcal{U} := \mathcal{C}(\theta)$ satisfies the compactness condition required of \Cref{thm:gen_danskin_specific}. We also consider $\mathcal{W} := \mathrm{Int}(\Omega)$ to ensure the necessary openness required of $\mathcal{W}$.
+
+% We now discuss the necessity of using the $\mathcal{C}^{3}$ norm in \Cref{eqn:ideal_score}: as we formalize subsequently in \Cref{thm:gen_danskin_specific}, for downstream applications where the conformal prediction regions are integrated with gradient-based optimization techniques, the sets $\mathcal{C}(\theta)$ must be compact. 
+% Naively using the $\mathcal{C}^{2}$ norm would result in prediction regions of the form $\mathcal{B}^{||\cdot||_{\mathcal{C}^{2}(\Omega,\mathbb{R})}}_{\widehat{q}}[\mathcal{F}(\theta)]$, where we use the convention of using $\mathcal{B}^{||\cdot||}_{r}(x)$ to denote the open $r$-radius ball around $x$ in the $||\cdot||$ norm and $\mathcal{B}^{||\cdot||}_{r}[x]$ to denote the corresponding closed ball. 
+
+% Important to note is that such a compactness argument follows for any $\widehat{q}$; therefore, the use of a discretized estimate to define the final conformal quantile, as discussed in the following section, is immaterial in ensuring compactness.
+
+% The proof of this largely concentrates on demonstrating the smoothness of the functional $J[w, u]$ of interest over the topological spaces of interest.
+
+We can, therefore, consider the following final robust problem formulation
+\begin{equation}\label{eqn:final_robust_prob}
+    w^{*}(\vec{a}) := \min_{w\in\Omega} \max_{\substack{
+        u\in\mathcal{H}^{\floor{s/2}-1}(\Omega) \\ 
+        || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}^{*}}
+    } J[w, \widehat{u}],
+\end{equation}
+for which we can provide both probabilistic regret guarantees by \Cref{lemma:suboptimality_guarantee} via the equivalence of \Cref{lemma:equiv_compact} and an efficient solution method leveraging the generalized Danskin's Theorem, formalized below and proven fully in \Cref{section:gen_danskin}.
+
+\begin{theorem}\label{thm:gen_danskin_specific}
+    Let $\mathbb{R}^{d}$ be endowed with the topology $\tau_{W}$ induced by the standard Euclidean inner product $\langle \cdot,\cdot \rangle$ and similarly $ \mathcal{H}^{\floor{s/2}-1}(\Omega)$ with the topology $\tau_{U}$ by the $\langle \cdot, \cdot \rangle_{ \mathcal{H}^{\floor{s/2}-1}(\Omega) }$ inner product. 
+    Let $J[w, u]$ be as defined in \Cref{eqn:collection_prob}, where $w\in\Omega\subset\mathbb{R}^{d}$ and $u\in\mathcal{U}\subset \mathcal{H}^{\floor{s/2}-1}(\Omega)$ with $\Omega$ is bounded and open and $\mathcal{U}$ compact. 
+    Denote by $\phi(w) := \max_{\widehat{u}\in\mathcal{U}} J[w, \widehat{u}]$. Then $\phi : \Omega\rightarrow\mathbb{R}$ is Fréchet differentiable for any $w\in\Omega$ and $\nabla_{w} \phi(w) = \nabla_{w} J[w, u^{*}(w)]$.
+\end{theorem}
+
+Having demonstrated the validity of the generalized Danskin's Theorem in this setting, we now demonstrate how to practically compute this gradient expression. For a fixed $u$, the gradient expression is
+\begin{equation}
+    \nabla_{w} J[w, u] 
+    = \int_{\Omega} (x - w) \mathbbm{1}[x\in\partial\mathcal{B}_{r}(w)] dx,
+    % = 2 (x - w) \delta\left((x - w)^{\top}(x-w) = \widehat{r}^2\right)
+\end{equation}
+where $\partial\mathcal{B}_{r}(w)$ denotes the boundary of $\mathcal{B}_{r}(w)$. Leveraging \Cref{thm:gen_danskin_specific}, it suffices to evaluate this expression at $u^{*}(w)$. Computing $u^{*}(w)$ in this setting, however, does not immediately follow from previous works, as we wish to maximize over a \textit{function} space. We, therefore, provide the explicit solution of this maximization over the following sections.
+
+% finally again refer back to the observation that $J[w, u]$ is linear in $u$ for any fixed $w$. B
+
+\subsection{Maximization Subproblem}\label{section:max_alg}
+
+\subsubsection{Equality Reformulation}
+To solve this maximization problem, we formulate it as a constrained calculus of variations problem, namely as follows:
+\begin{equation}\label{eqn:max_subproblem}
+    \begin{aligned}
+        u_{\le}^{*}(w, \vec{u}) := \max_{u\in\mathcal{H}^{\floor{s/2}-1}(\Omega)} \int_{\mathcal{B}_{r}(w)} u(x) dx\\
+        \mathrm{s.t.}\qquad \left|\left| \sum_{k=1}^{K} \vec{u}_{k} \phi_{k} - u \right|\right|_{\floor{s/2}}\le\widehat{q}
+    \end{aligned}
+\end{equation}
+We first demonstrate that the equality-constrained reformulation is equivalent, formalized below and proven fully in \Cref{section:equality_reformulation}.
+\begin{lemma}\label{lemma:equality_reformulation}
+    Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, and $u_{\le}^{*}(w, \vec{u})$ be as given by \Cref{eqn:max_subproblem}. Further, let:
+    \begin{equation}\label{eqn:max_sub_eqversion}
+        \begin{aligned}
+            u_{=}^{*}(w, \vec{u}) := \max_{u\in\mathcal{H}^{\floor{s/2}-1}(\Omega)} \int_{\mathcal{B}_{r}(w)} u(x) dx\\
+            \mathrm{s.t.}\qquad \left|\left| \sum_{k=1}^{K} \vec{u}_{k} \phi_{k} - u \right|\right|_{\floor{s/2}} = \widehat{q}
+        \end{aligned}
+    \end{equation}
+    Then $J[w, u_{\le}^{*}(w, \vec{u})] = J[w, u_{=}^{*}(w, \vec{u})]$.
+\end{lemma}
+
+\subsubsection{Calculus of Variations Maximizer}
+We now consider this equality-constrained variational formulation of \Cref{eqn:max_sub_eqversion} and simply denote its solution as $u^{*}(w, \vec{u})$. To solve this reformulated problem, we proceed in two stages. We first demonstrate the solution $u^{*}(w, \vec{u})$ must solve a more readily solvable related differential equation, formally stated in \Cref{thm:calc_var_reform} below. Doing so requires a derivation that appeals to the multivariate, generalized Euler-Lagrange formulation from the classical study of calculus of variations and the fact that $u^{*}(w)$ is uniquely defined for any fixed $w\in\Omega$, which we demonstrated in the proof of \Cref{thm:gen_danskin_specific}. This result is explicitly derived in \Cref{section:calc_var_reform}. 
+
+\begin{theorem}\label{thm:calc_var_reform}
+    Let $w\in\mathbb{R}^{d}$ and $\vec{u}\in\mathbb{R}^{K}$. Let $u_{\mathcal{L}}(w, \vec{u})$ denote the solution to:
+    \begin{equation}\label{eqn:euler_lagrange}
+        (u-\sum_{k=1}^{K} \vec{u}_k \phi_k) + \sum_{\alpha=1}^{s} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} \sum_{k=1}^{K} \vec{u}_k \phi_k \right) = 0.
+    \end{equation}
+    Then, $J[w, u^{*}(w, \vec{u})] = J[w, u_{\mathcal{L}}(w, \vec{u})]$ for a $\lambda\ge0$.
+\end{theorem}
+
+Using this reformulation, we now provide an explicit solution strategy leveraging the spectral representations of the functions involved. Again, the full derivation of this expression is deferred to \Cref{section:euler_lagrange_spectral}.
+
+% \begin{algorithm}[H]
+%   \caption{\label{alg:fpo} Functional Predict-Then-Optimize}
+%   \begin{algorithmic}
+%     \State \textbf{Inputs: } Input function $\theta$, Neural operator $\mathcal{F}(\theta)$, Calibration set $\mathcal{D}_{C}$, Desired coverage $1-\alpha$, Step sizes $\eta_{w}$, Max steps $T_{w}$
+%     \State $\widehat{q}\gets\mathcal{C}^{3}\text{-CP Quantile}(\theta, \mathcal{F}(\theta), \mathcal{D}_{C}, 1-\alpha)$
+%     \State $w^{(0)} \sim U(\mathcal{W}), \widehat{U} := \mathcal{F}(\theta)$
+%     \State $\{\psi_{k}\}_{k=0}^{K}\gets\textsc{GenWavelets}(K, \Omega)$
+%     \State $\vec{\Psi}^{*}\gets\{\mathcal{C}^3\text{-Estimate}(\psi_{k})\}_{k=0}^{K}$
+%     \State $\vec{f}\gets\textsc{WaveletFit}(\widehat{U}, \{\psi_{k}\})$
+%     \For {$t_{w} \in\{0,\ldots T_{w}-1\}$}
+%     % \State $U^{(0)}\gets\widehat{U}$
+%     % \State $\vec{f}\gets\textsc{WaveletFit}(\widehat{}, \{\psi_{k}\})$
+%     \State $\vec{\Psi}^{(w)} \gets\{\int_{\mathcal{B}_{r}(w)}\psi_{k}(x) dx\}_{k=0}^{K}$
+%     \State $\vec{u}\gets\textsc{LP}(\vec{u}^{\top}\vec{\Psi}^{(w)},
+%     \{\vec{u}^{\top} \vec{\Psi}_{\sigma}^{*} \le \vec{f}^{\top} \vec{\Psi}_{\sigma}^{*} - \widehat{q} : \sigma\in\Sigma\})$
+%     % \For {$t_{U} \in\{0,\ldots T_{U}-1\}$}
+%     % \State $\widetilde{U}\gets U^{(t_{U})} + \eta_{U}\mathbbm{1}[x\in\mathcal{B}_{r}(w)]$
+%     % \State $U^{(t_{U}+1)}\gets\widetilde{U},[\nu_{\mathrm{lo}},\nu_{\mathrm{hi}}]\gets[0,1]$
+    
+%     % \While{\textbf{not} $\mathcal{C}^3$-Norm$(U^{(t_{U}+1)})\le\widehat{q}$}
+%     % \State $\nu\gets\frac{\nu_{\mathrm{lo}}+\nu_{\mathrm{hi}}}{2}$
+%     % \State $U^{(t_{U}+1)}\gets \widehat{U} + \nu(\widetilde{U} - \widehat{U})$
+    
+%     % \If{$\mathcal{C}^3$-Norm$(U^{(t_{U}+1)})\le\widehat{q}$} $\nu_{\mathrm{lo}}\gets\nu$
+%     % \Else{ $\nu_{\mathrm{hi}}\gets\nu$}
+%     % \EndIf
+%     % \EndWhile
+%     % \EndFor
+%     \State $w^{(t_{w}+1)} \gets w^{(t_{w})} - \eta_{w} \int_{\partial\mathcal{B}_{r}(w)}\sum_{k=0}^{K} \widehat{u}^{*}_{k} \psi_{k}(x) dx$
+%     \EndFor
+%     \State{\textbf{Return} $w^{(T_w)}$}
+% \end{algorithmic}
+% \end{algorithm}
+
+\section{Experiments}\label{section:experiments} 
+\begin{figure*}
+  \centering 
+  \includegraphics[width=0.95\textwidth]{images/calibration.png}
+  \caption{\label{fig:cal} Calibration was assessed over 1,000 i.i.d. test samples across three resolutions per PDE benchmark task. The dashed line is given as reference for what a perfectly calibrated model would look like.}
+\end{figure*}
+
+We now demonstrate calibration and study the optimality of the resulting decisions $w^{*}$ 
+% predictive efficiency of MFCP 
+empirically across several tasks. We specifically wish to compare FPO against the corresponding nominal approach, where the predicted scalar field $\mathcal{F}(\theta)$ is simply assumed to be well-specified with the decision appropriately defined using said prediction. We first study FPO against a number of PDE benchmark tasks in \Cref{section:experiments_pdebench} to demonstrate the versatility of this approach across such use cases, namely the 2D Diffusion-Reaction equation, 2D Darcy Flow, and 2D shallow-water equations of \cite{takamoto2022pdebench}.
+% In particular, we show the validity of the procedure across several PDE benchmark tasks from \cite{takamoto2022pdebench} in \Cref{section:experiments_pdebench_cov}, empirically verifying the claims on coverage made previously. We specifically demonstrate results across both the basic (the 1D advection/Burgers/Diffusion-Reaction/Diffusion-Sorption equations, 2D Diffusion-Reaction equation, and 2D Darcy Flow) and advanced (Compressible and incompressible Navier-Stokes equations and shallow-water equations) tasks. 
+We then study the resulting downstream consequences in an application of interest, namely for emergency disaster relief for flooding \Cref{section:experiments_disaster}. We additionally demonstrate the calibration of this procedure in \Cref{section:experiment_calibration}. Models were taken to be Fourier Neural Operators \cite{li2020fourier} across all experiments. Details are provided in \Cref{section:exp_setup}, and code will be made public upon acceptance.
+
+\subsection{Problem Setup}\label{section:problem_setup}
+We, therefore, have the desired characterization of the suboptimality gap, thus motivating the solution of the problem posited in \Cref{eqn:robust_func_pred_opt}. 
+% In the proceeding discussion, we focus on functionals with a particular structure, namely those arising in problems of optimal placement in simulation-based optimization. That is, from the prediction of a spatial map, we then wish to determine the optimal placement of some collection mechanism from which that resource can be maximally accumulated, such as in carbon sequestration \cite{nghiem2009simulation, zhang2012numerical} or oil recovery. Such problems were classically approached in the geostatistics literature using Gaussian process-based kriging methods. In cases where the autonomous evolution dynamics are well-understood, however, modeling can be better performed by leveraging operator methods in place of purely data-driven regression techniques, as we study herein. 
+% In the proceeding discussion, we focus on functionals with a particular structure, namely those in the subdomain of spatial optimization known as location-allocation, namely where we assume a ``resource'' is to be maximally accrued with the placement of facilities within a predefined coverage radius $r$. Such resources could be people, for instance in the optimal placement of hospitals \cite{polo2015location}, or materials, such as carbon or oil in the placement of extraction facilities \cite{fotias2024optimization}. In both cases, we consider the simplified problem setup where only a \textit{single} facility is to be placed, also known as the hub-location problem \cite{murray2020single,murray2023opensource}. Traditionally, such objectives were considered over discretized GIS (Geographic Information System) data; we, however, are interested in the continuous counterpart to this classical problem setup.
+% : it is well-known that allocation of multiple stations is NP-hard, rendering its theoretical characterization difficult. Notably, while the results below focus on the single facility case, the ultimate algorithm described can be easily extended t
+% collection well has some radius $r$ over which the material of interest is accumulated rather than solely being extracted at the point of placement. 
+
+
+\subsection{PDE Benchmarks}\label{section:experiments_pdebench}
+We now demonstrate the regrets of solving the continuous space maximal coverage problem across the nominal and robust specifications. Full descriptions of the PDEs studied in this experiment are provided in \Cref{section:exp_setup}. The results are presented in \Cref{table:bench_results}. As expected, the resulting misspecification in the prediction of $\mathcal{F}(\theta)$ results in suboptimal decision making in the nominal specification, which is accounted for by the robust FPO formulation. 
+
+\begin{table}[H]
+\caption{\label{table:bench_results} Median regret over 1,000 i.i.d. test samples with median absolute deviations in parentheses. 
+}
+\centering
+% \resizebox{\columnwidth}{!}{%
+\begin{tabular}[t]{ccc}
+\toprule
+Task & Nominal & FPO \\
+\midrule
+Darcy Flow & & \\
+Diffusion-Reaction & & \\
+Shallow Water & & \\
+\bottomrule
+\end{tabular}
+% }
+\end{table}
+
+\subsection{Disaster Relief}\label{section:experiments_disaster}
+Neural operators have recently been leveraged for natural disaster prediction, such as for hurricanes \cite{pathak2022fourcastnet}, landslides \cite{chen2024deep}, and flooding \cite{sun2023rapid}. We focus on the last of these, seeking here to find the optimal placement of optimal disaster relief sites as was of interest in \cite{yang2020continuous}. The complete results are shown in \Cref{table:disaster_results}, where we again see the reduction in regret resulting from having well-specified robustness regions resulting from the conformalization process.
+
+\begin{table}[H]
+\caption{\label{table:disaster_results} Median regret over 1,000 i.i.d. test samples with median absolute deviations in parentheses. 
+}
+\centering
+% \resizebox{\columnwidth}{!}{%
+\begin{tabular}[t]{cc}
+\toprule
+Nominal & FPO \\
+\midrule
+1 & 0 \\
+\bottomrule
+\end{tabular}
+% }
+\end{table}
+
+% Neural operators have recently been leveraged in scientific problems of interest, such as weather prediction \cite{pathak2022fourcastnet} and carbon plume modeling \cite{wen2022accelerating}. We focus on the latter herein, in which the pressure buildup in carbon capture storage reservoirs was of interest. This initial work demonstrated how neural operators enable sufficient speedup as to allow for probabilistic assessment of storage pressures, from which informed decisions on injection design could be made \cite{nghiem2009simulation, zhang2012numerical,pacala2018negative}. Such probabilistic modeling, however, has no upstream coverage guarantees, diminishing the supposed robustness claim. We, therefore, now demonstrate how MFCP enables efficient robust injection design.
+
+\subsection{Coverage Validity}\label{section:experiments_pdebench_cov}
+To validate the coverage guarantees discussed in \Cref{section:disc_score}, we compute the empirical coverage across various levels of desired coverage $\alpha\in(0,1)$ for both of the previous two experimental setups. For each setup, we test several spatial discretizations and demonstrate calibration across each. We specifically compute this in the manner described in \Cref{section:experiments} for $\alpha$ varying by increments of 0.05. The results are shown in \Cref{fig:cal}, which shows the aforementioned desired calibration.  
+
+\section{Discussion}\label{section:discussion}
+We have presented an approach of leveraging conformal prediction over neural operator surrogates to define a robust shape optimization problem and demonstrated how to efficiently solve such a problem. This work suggests many directions for extension. The most immediate would be in extending this work to the ``optimize-then-discretize'' framework of shape optimization, in which a functional representation of $\Omega$ is used in place of its discretized counterpart. In addition, extending this work to enable more general topological design optimization, in which optimization iterates are permitted to modify topological properties of the design, would be of interest. Further, an exciting application direction would be scaling this pipeline to more extensive engineering design tasks.
+
+\section*{Acknowledgments}
+We would like to acknowledge the assistance of volunteers in putting
+together this example manuscript and supplement.
+
+\bibliographystyle{siamplain}
+\bibliography{references}
+
+\newpage
+\appendix
+
+\section{Sobolev Norm Bound Example}\label{section:bounded_norm_setup}
+We provide an example of a setup where a Sobolev norm bound can be provided from the PDE problem formulation, as given on page 323 of \cite{evans2022partial}. We denote
+\begin{equation}
+    L u = -\sum_{i,j=1}^n \left( a^{ij}(x) u_{x_i} \right)_{x_j} + \sum_{i=1}^n b^i(x) u_{x_i} + c(x) u.
+\end{equation}
+
+\begin{theorem}
+    Let $m$ be a nonnegative integer, and assume $a^{ij}, b^{i}, c \in C^{m+1}(\overline{\Omega}) \quad (i, j = 1, \ldots, n)$ and $f \in \mathcal{H}^{m}(\Omega)$. Suppose that $u \in \mathcal{H}^{1}_{0}(\Omega)$ is a weak solution of the boundary-value problem
+    \begin{align}\label{eqn:sobolev_bound_setup}
+        \begin{cases}
+            Lu = f & \text{in } \Omega \\
+            u = 0 & \text{on } \partial \Omega.
+        \end{cases}
+    \end{align}
+    Assume finally $\partial \Omega \text{ is } C^{m+2}.$
+    Then $u \in \mathcal{H}^{m+2}(\Omega),$ and we have the estimate
+    \begin{align}\label{eqn:sobolev_bound}
+        \|u\|_{\mathcal{H}^{m+2}(\Omega)} \leq C \left( \|f\|_{\mathcal{H}^{m}(\Omega)} + \|u\|_{L^{2}(\Omega)} \right),
+    \end{align}
+    the constant $C$ depending only on $m$, $\Omega$ and the coefficients of $L$. If $u$ is further the unique solution of \Cref{eqn:sobolev_bound_setup}, then estimate \Cref{eqn:sobolev_bound} simplifies to read
+    \begin{align}
+        \|u\|_{\mathcal{H}^{m+2}(\Omega)} \leq C \|f\|_{\mathcal{H}^{m}(\Omega)}.
+    \end{align}
+\end{theorem}
+
+\section{Functional Coverage Guarantee}\label{section:coverage_guarantee}
+\begin{theorem}
+    Let $\mathcal{D}_{C} := \{(\vec{A}^{(i)}, \vec{U}^{(i)})\}_{i=1}^{N_C}$ with $\mathcal{D}_{C}\cup(A', U')\overset{iid}{\sim}\mathcal{P}(A, U)\in\mathcal{H}^{s}(\Omega)\times\mathcal{H}^{s}(\Omega)$ for a compact $\Omega\subset\mathbb{R}^{d}$. Further assume there exists $M$ such that for any $u\in\mathrm{Supp}(\mathcal{P}(U))$, $|| u ||_{s}\le M$. Further, let $\{(\vec{A}^{(i)}, \vec{U}^{(i)})\}\cup(\vec{A}', \vec{U}')\in\mathbb{R}^{K}\times\mathbb{R}^{K}$ denote the corresponding truncated spectral projections per \Cref{eqn:spectral_decomp}. Let $\alpha\in(0,1)$ and $\widehat{q}$ be the $\ceil{(N_{C}+1)(1-\alpha)}/N_{C}$ quantile of \Cref{eqn:score_func} over $\mathcal{D}_{C}$. Then, there exists $C > 0$ such that
+    \begin{equation}\label{eqn:coverage_guarantee}
+        \mathcal{P}\left(\left|\left| \sum_{k=1}^{K} \mathcal{F}(\vec{A}')_{k} \phi_{k} - U' \right|\right|_{\floor{s/2}}\le\widehat{q} + C K^{-1/2}\right) \ge 1-\alpha.
+    \end{equation}
+\end{theorem}
+\begin{proof}
+    We consider the event of interest conditionally on the event $(A', U') = (a', u')$ with $s(\vec{a}', \vec{u}')\le\widehat{q}$. By a slight abuse of notation, we denote by $\vec{\textbf{u}}'$ the \textit{full} spectral decomposition of $u'$, i.e. for which we do \textit{not} truncate at some finite $K < \infty$. With this notation, we have: 
+    \begin{gather*}
+        \left|\left| \sum_{k=1}^{K} \mathcal{F}(\vec{a}')_{k} \phi_{k} - u' \right|\right|_{\floor{s/2}}
+        = \left|\left| \sum_{k=1}^{K} \mathcal{F}(a')_{k} \phi_{k} - \sum_{k=1}^{\infty} \vec{\textbf{u}}'_{k} \phi_{k} \right|\right|_{\floor{s/2}} \\
+        % = \left|\left| \sum_{k=1}^{K} (\mathcal{F}(a)_{k} - u_k) \phi_{k} - \sum_{k=K+1}^{\infty} u_{k} \phi_{k} \right|\right|_{\floor{s/2}}
+        \le \underbrace{\left|\left| \sum_{k=1}^{K} (\mathcal{F}(a')_{k} - \vec{\textbf{u}}'_{k}) \phi_{k} \right|\right|_{\floor{s/2}}}_{\mathcal{E}_{\le K}} + \underbrace{\left|\left| \sum_{k=K+1}^{\infty} \vec{\textbf{u}}'_{k} \phi_{k} \right|\right|_{\floor{s/2}}}_{\mathcal{E}_{> K}}.
+    \end{gather*}
+    We now demonstrate how each of the above two terms can be bounded. For the former, the result immediately follows in noting that, by classical results of spectral decomposition, the restriction of $\vec{\textbf{u}}'$ to $\mathbb{R}^{K}$ via its first $K$ components is equivalent to $\vec{u}'$, i.e. $\vec{\textbf{u}}_{k}' = \vec{u}_{k}'$ for $k=1,...,K$. Since $\mathcal{E}_{\le K}$ is then precisely $s(\vec{a}', \vec{u}')$, we get the bound $\mathcal{E}_{\le K}\le\widehat{q}$ directly by assumption on $(a', u')$.
+    
+    % Under the aforementioned assumption that $u'\in\mathcal{F}(a')$, we immediately have that $\mathcal{E}_{\le K}\le\widehat{q}$ from standard results of split conformal prediction. 
+    
+    For $\mathcal{E}_{> K}$, we appeal to a classical result from the study of Legendre polynomials, specifically from \cite{canuto2006spectral}, which states that, if $u'\in \mathcal{H}^{m}(\Omega)$ and $1\le\ell\le m$, there exists a constant $C$ such that
+    \begin{equation*}
+        \left|\left| u' - \sum_{k=1}^{K} \vec{u}_{k}' \phi_{k} \right|\right|_{\ell} \leq C K^{2\ell - 1/2 - m} || u' ||_{m}.
+    \end{equation*}
+    We consider the special case where $\ell = \floor{s/2}$ and $m = s$, from which we arrive at the desired statement that there exists a $C'$ such that
+    \begin{equation*}
+        \left|\left| \sum_{k=K+1}^{\infty} \vec{\textbf{u}}'_{k} \phi_{k} \right|\right|_{\floor{s/2}}
+        % \left|\left| \sum_{k=K+1}^{\infty} u_{k}' \phi_{k} \right|\right|_{\floor{s/2}}
+        \le C' K^{-1/2} || u' ||_{s}.
+    \end{equation*}
+    Leveraging the assumed bound that $|| u' ||_{s}\le M$ and defining $C := C'M$, we get the desired bound under the conditional assumption. We conclude by noting that $(A', U') = (a', u')$ with $\mathcal{P}(s(\vec{A}', \vec{U}')\le\widehat{q}) \ge 1 - \alpha$ follows from standard results of conformal prediction, completing the proof.  
+\end{proof}
+
+
+\section{Prediction Region Validity Lemma}\label{section:coverage_bound}
+\begin{lemma}
+    Consider any $J[w, u]$ that is $L$-Lipschitz in $u$ under the metric $||\cdot||_{\floor{s/2}}$ for any fixed $w$. Suppose $\mathcal{D}_C, (A', U'), (\vec{A}', \vec{U}'), \alpha, \widehat{q}$, and $C$ are defined as stated in \Cref{thm:func_cov}. Then
+    \begin{equation}\label{eqn:suboptimality_guarantee}
+        \mathcal{P}\left(0 \le \Delta(\vec{A}',U') \le L (\widehat{q} + C K^{-1/2})\right) \ge 1 - \alpha.
+    \end{equation}
+\end{lemma}
+
+\begin{proof}
+    This follows immediately from related proofs given in previous works, namely in \cite{patel2023conformal}:
+    \begin{gather*}
+        \min_{w\in\mathcal{W}} \max_{\widehat{u}\in\mathcal{C}(\theta)} J[w, \widehat{u}] - \min_{w} J[w, u] \\
+        \le \max_{w\in\mathcal{W}} | \max_{\widehat{u} \in \mathcal{C}(\theta)} J[w, \widehat{u}] - J[w, u] | \\ 
+        \le L \max_{\widehat{u} \in \mathcal{C}(\theta)} || \widehat{u} - u ||_{\floor{s/2}} 
+        \le L (\widehat{q} + C K^{-1/2}).
+    \end{gather*}
+    Since we have the assumption that $\mathcal{P}(U \in \mathcal{C}(\Theta)) \ge 1 - \alpha$, the result immediately follows.
+\end{proof}
+% \begin{lemma}
+%     Consider any $J[w, u]$ that is $L$-Lipschitz in $u$ under the metric $d$ for any fixed $w$. Assume further that $\mathcal{P}_{\Theta,U}(U \in \mathcal{C}(\Theta)) \ge 1 - \alpha$. Then, 
+%     \begin{equation}
+%         \mathcal{P}_{\Theta,U}\left(0 \le \Delta(\Theta,U) \le L \mathrm{\ diam}(\mathcal{C}(\Theta))\right) \ge 1 - \alpha.
+%     \end{equation}
+% \end{lemma}
+
+% \begin{proof}
+%     We consider the event of interest conditionally on a pair $(\theta, u)$ where $u\in\mathcal{C}(\theta)$:
+%     \begin{gather*}
+%         \min_{w\in\mathcal{W}} \max_{\widehat{u}\in\mathcal{C}(\theta)} J[w, \widehat{u}] - \min_{w} J[w, u] \\
+%         \le \max_{w\in\mathcal{W}} | \max_{\widehat{u} \in \mathcal{C}(\theta)} J[w, \widehat{u}] - J[w, u] | \\ 
+%         \le L \max_{\widehat{u} \in \mathcal{C}(\theta)} || \widehat{u} - u ||_{ \mathcal{C}^{2}(\Omega,\mathbb{R})}^{2} 
+%         \le L \mathrm{diam}(\mathcal{C}(\theta)).
+%     \end{gather*}
+%     Since we have the assumption that $\mathcal{P}(U \in \mathcal{C}(\Theta)) \ge 1 - \alpha$, the result immediately follows.
+% \end{proof}
+
+\section{Suboptimality Gap Lemma}\label{section:suboptimalty_gap}
+\begin{lemma}
+    Let $J : \mathbb{R}^{d}\times\mathcal{H}^{\floor{s/2}}(\Omega)\rightarrow\mathbb{R}$, where $\Omega\subset\mathbb{R}^{d}$ and $\mathcal{W}\subset\mathbb{R}^{d}$. Then, for any $\widehat{q}\in\mathbb{R}$,
+    \begin{equation*}
+        \min_{w\in\Omega} \max_{\substack{
+            u\in\mathcal{H}^{\floor{s/2}}(\Omega) \\
+            || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}
+        }} J[w, \widehat{u}] 
+        =
+        \min_{w\in\Omega} \max_{\substack{
+            u\in\mathcal{H}^{\floor{s/2}-1}(\Omega) \\ 
+            || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}}
+        } J[w, \widehat{u}].
+    \end{equation*}
+\end{lemma}
+
+\begin{proof}
+    % Notice that, we have probabilistic guarantees on the following robust problem arising from the conformal coverage guarantees much in the way of previous works in this space, namely on:
+    % \begin{gather*}
+    %     \min_{w\in\mathcal{W}} \max_{\substack{
+    %         u\in\mathcal{H}^{\floor{s/2}}(\Omega) \\
+    %         || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}
+    %     }} J[w, \widehat{u}] - \min_{w\in\mathcal{W}} J[w, \widehat{u}].
+    % \end{gather*}
+    % We, however, only have computational guarantees on convergence if the maximization is done instead over $u\in\mathcal{H}^{\floor{s/2}-1}(\Omega)$, i.e.
+    % \begin{gather*}
+    %     \min_{w\in\mathcal{W}} \max_{\substack{
+    %         u\in\mathcal{H}^{\floor{s/2}-1}(\Omega) \\ 
+    %         || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}}
+    %     } J[w, \widehat{u}].
+    % \end{gather*}
+    Since the minimization domain remains unchanged, i.e. at some $\mathcal{W}$, it suffices to demonstrate the maximizer for any fixed $w$ remains identical between the two setups. Denote
+    \begin{equation}
+        u_{\ell}^{*}(w) := \max_{\substack{
+            u\in\mathcal{H}^{\ell}(\Omega)\\
+            || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}
+        }} J[w, \widehat{u}].
+    \end{equation}
+    We complete this proof by demonstrating $J[w, u_{\floor{s/2}}^{*}(w)] \le J[w, u_{\floor{s/2}-1}^{*}(w)]$ and $J[w, u_{\floor{s/2}}^{*}(w)] \ge J[w, u_{\floor{s/2}-1}^{*}(w)]$. The former follows immediately, since $\mathcal{H}^{s_{1}}(\Omega)\subset\mathcal{H}^{s_{2}}(\Omega)$ for any $s_{2}\le s_{1}$ and, therefore,
+    \begin{equation*}
+        \{u\in\mathcal{H}^{\floor{s/2}}(\Omega) : || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}\}
+        \subset \{u\in\mathcal{H}^{\floor{s/2}-1}(\Omega) : || u - \widehat{u} ||_{\floor{s/2}}\le\widehat{q}\},
+    \end{equation*}
+    from which the first inequality immediately follows.
+    
+    To demonstrate $J[w, u_{\floor{s/2}}^{*}(w)] \ge J[w, u_{\floor{s/2}-1}^{*}(w)]$, we must leverage the form of the constraint. Suppose it were not the case that $J[w, u_{\floor{s/2}}^{*}(w)] \ge J[w, u_{\floor{s/2}-1}^{*}(w)]$, i.e. $J[w, u_{\floor{s/2}}^{*}(w)] < J[w, u_{\floor{s/2}-1}^{*}(w)]$. Clearly, this could only be the case if we had $u_{\floor{s/2}-1}^{*}\notin\mathcal{H}^{\floor{s/2}}(\Omega)$, which would further imply $|| u ||_{\floor{s/2}} = \infty$. However, we know $|| u - \sum_{k=1}^{K} \vec{u}_{k} \phi_{k} ||_{\floor{s/2}}\le\widehat{q}$. By the reverse triangle inequality, 
+    % i.e. $| ||u|| - || v || |\le|| u -v ||$, 
+    this would then imply:
+    \begin{gather*}
+        \left| || u ||_{\floor{s/2}} - || \sum_{k=1}^{K} \vec{u}_{k} \phi_{k} ||_{\floor{s/2}} \right| \le || u - \sum_{k=1}^{K} \vec{u}_{k} \phi_{k} ||_{\floor{s/2}}
+        \iff \infty\le\widehat{q},
+    \end{gather*}
+    reaching contradiction. We, therefore, have the desired equivalence of formulations.
+\end{proof}
+
+\section{Generalized Danskin's Theorem}\label{section:gen_danskin}
+
+\begin{theorem}\label{thm:gen_danskin}
+    (Proposition A.13 from \cite{ulbrich2024generalized}) Assume the following:
+    \begin{enumerate}
+        \item $(W, ||\cdot||_{W})$ is a normed space, $\mathcal{W}\subset W$ is open, and $(W,\tau_{W})$ is a Haussdorf topological vector space with a topology $\tau_{W}$ such that the identity on $W$ is $|| \cdot ||_{W}$-$\tau_{W}$ continuous.
+        \item $(U,\tau_{U})$ is a Hausdorff topological space.
+        \item $\mathcal{U}\subset U$ is a sequentially compact set with respect to $\tau_{U}$.
+        \item $J : \mathcal{W}\times \mathcal{U}\rightarrow\mathbb{R}$ is sequentially upper semicontinuous with respect to $\tau_{W}\times \tau_{\mathcal{U}}$ and $J(\cdot,u) : \mathcal{W}\rightarrow\mathbb{R}$ is sequentially continuous with respect to $\tau_{W}$ for all $u\in \mathcal{U}$.
+        \item $J : \mathcal{W}\times \mathcal{U}\rightarrow\mathbb{R}$ is Fréchet differentiable in the first variable and $\nabla_{w} J : \mathcal{W}\times \mathcal{U}\rightarrow W^{*}$ is sequentially continuous with respect to $\tau_{W}\times\tau_{U}$.
+    \end{enumerate}
+    Further assume the correspondence $M : W\rightarrow U$ defined by $M(w) := \{u : \max_{u\in\mathcal{U}} J[w, u] \}$ is single-valued on an $||\cdot ||$-open set $W_{X}\subset W$, then $J : W_{X}\rightarrow\mathbb{R}$ is Fréchet differentiable and $\nabla_{w} \phi(w) = \nabla_{w} J[w, M(w)]$.
+    % Then $\phi : \mathcal{W}\rightarrow\mathbb{R}$ is Gâteaux differentiable at $w$ and there holds:
+    % \begin{equation}
+    %     \nabla_{w} \phi(w,h) = \langle \nabla_{w} J[w, u^{*}(w)], h \rangle_{W^{*},W}.
+    % \end{equation}
+\end{theorem}
+% We demonstrate that such a theorem is immediately applicable to our setting of interest by demonstrating the assumptions are met.
+\begin{theorem}
+    Let $\mathbb{R}^{d}$ be endowed with the topology $\tau_{W}$ induced by the standard Euclidean inner product $\langle \cdot,\cdot \rangle$ and similarly $ \mathcal{H}^{\floor{s/2}-1}(\Omega)$ with the topology $\tau_{U}$ by the $\langle \cdot, \cdot \rangle_{ \mathcal{H}^{\floor{s/2}-1}(\Omega) }$ inner product. 
+    Let $J[w, u]$ be as defined in \Cref{eqn:collection_prob}, where $w\in\Omega\subset\mathbb{R}^{d}$ and $u\in\mathcal{U}\subset \mathcal{H}^{\floor{s/2}-1}(\Omega)$ with $\Omega$ is bounded and open and $\mathcal{U}$ compact. 
+    Denote by $\phi(w) := \max_{\widehat{u}\in\mathcal{U}} J[w, \widehat{u}]$. Then $\phi : \Omega\rightarrow\mathbb{R}$ is Fréchet differentiable for any $w\in\Omega$ and $\nabla_{w} \phi(w) = \nabla_{w} J[w, u^{*}(w)]$.
+\end{theorem}
+\begin{proof}
+    The proof immediately follows in demonstrating the assumptions of \Cref{thm:gen_danskin} are satisfied in the setting of interest, as we do below. 
+\begin{enumerate}
+    \item We have that $(\mathbb{R}^{d}, ||\cdot||_{\mathbb{R}^{d}})$ is a normed space by assumption. Similarly, $\Omega\subset\mathbb{R}^{d}$ is open by assumption. $(\mathbb{R}^{d},\tau_{W})$ is a (finite-dimensional) Hilbert space and, therefore, a Haussdorf topological vector space.
+    % By assumption, $w\in\Omega\subset\mathbb{R}^{d}$ (for either $d=2$ or $d=3$ in practice) is a normed subspace and with an openness assumption imposed by the statement of the optimization problem. 
+    
+    \item Similarly, $(\mathcal{C}^{2}(\Omega,\mathbb{R}), \tau_{U})$ is a metric space, immediately satisfying the desired Hausdorff structure.
+    % $\mathcal{U} := \mathcal{C}(\theta)\subset \mathcal{C}^{2}(\Omega,\mathbb{R})$. Given that $ \mathcal{C}^{2}(\Omega,\mathbb{R})$ is a Hilbert space and, therefore, a complete metric space, it is a Hausdorff topological space.
+    
+    \item Again, given that $(\mathcal{C}^{2}(\Omega,\mathbb{R}), \tau_{U})$ is a metric space, a subset $\mathcal{U}$ is sequentially compact if and only if it is compact, which is true by assumption.
+    
+    \item To demonstrate sequential continuity, we use the standard result that a function mapping between metric spaces $f : (X, d_{X})\rightarrow(Y, d_{Y})$ is sequentially continuous on $X$ if and only if it is continuous on $X$. Given that both spaces of interest have induced metric structure, it therefore suffices to demonstrate joint continuity in $(w,u)$. To prove this, we leverage the following lemma.
+
+    \begin{lemma}\label{lemma:joint_cts}
+        Let $X$ be a metrizable topological space and $V$, $W$ be Fréchet spaces. Then any separately continuous map $X\times V\rightarrow W$ which is linear with respect to the second variable, is jointly continuous.
+    \end{lemma}
+
+    % Such a lemma is immediately applicable as $X = \mathbb{R}^{d}$, $V = \mathcal{C}^{2}(\Omega,\mathbb{R})$, and $W = \mathbb{R}$. 
+    To see the predicates of such a lemma are satisfied, first note that $X := \mathbb{R}^{d}$ is metrizable under the Euclidean metric and $V = \mathcal{C}^{2}(\Omega,\mathbb{R})$ and $W = \mathbb{R}$ are Fréchet spaces. In addition, $J(\cdot, u)$ is a linear functional, as:
+    \begin{gather*}
+        J[w, \alpha u_{1} + \beta u_{2}]
+        := \int_{\mathcal{B}_{r}(w)} (\alpha u_{1} + \beta u_{2})(x) dx
+        = \alpha \int_{\mathcal{B}_{r}(w)} u_{1}(x) dx + \beta \int_{\mathcal{B}_{r}(w)} u_{2}(x) dx
+        = \alpha J[w, u_{1}] + \beta J[w, u_{2}].
+    \end{gather*} 
+    Therefore, it suffices to demonstrate $J$ is separately continuous. To see continuity in the first argument, fix some $u_0$. Continuity then immediately follows from the assumption that $u_{0}\in\mathcal{C}^{2}(\Omega,\mathbb{R})$, thus implying such functions are continuously differentiable and, therefore, Lipschitz continuous. Denote by $L$ the Lipschitz constant for such a $u_{0}$, from which
+    % Continuity in the first argument immediately follows from continuity of the integral of a continuous function. 
+    % % That is, for any fixed $u_{0}$:
+    % % \begin{gather*}
+    % %     % \int_{\mathcal{B}_{r}} \left|u_{0}(w + x) - u_{0}(w_{0} + x)\right| dx
+    % %     % \le \int_{\mathcal{B}_{r}} \epsilon / (2 \mathrm{Vol}(\mathcal{B}_{r})) dx
+    % %     % \le \epsilon / 2.
+    % % \end{gather*}
+    % That is, by the continuity of $u_{0}$, we have that, for $x_{0}$ and $\epsilon > 0$, there is some $\delta_{U}(\epsilon, x_{0})$ such that $|| x - x_0 || < \delta_{U}(\epsilon, x_{0})\implies || u_{0}(x) - u_{0}(x_0) || < \epsilon$. Further note that, for any $w\in\mathcal{B}_{\delta}(w_{0})$ and $x\in\mathcal{B}_{r}$, we have that $w + x\in\mathcal{B}_{\delta + r}(w_{0})$. 
+    % To now demonstrate the continuity of $J(\cdot, u_{0})$ for any fixed $u_{0}$, consider any $w_{0}\in\mathbb{R}^{d}$ and $\epsilon > 0$ and take $\delta :=  \min_{x\in\mathcal{B}_{\delta + r}(w_{0})} \delta_{U}(\epsilon / \mathrm{Vol}(\mathcal{B}_{r}), x)$. Then:
+    % % for any fixed $u_{0}$, denote by $\delta_{W}(x)$ the condition for which $|| w - w_{0} || \le \delta_{W}(x) \implies | u_{0}(w + x) - u_{0}(w_{0} + x) | \le \epsilon / (2 \mathrm{Vol}(\mathcal{B}_{r}))$. Then, denoting $\delta_{W} := \min_{x\in\mathcal{B}_{r}} \delta_{W}(x)$, we have:
+    % \begin{gather*}
+    %     | J(w, u_{0}) - J(w_{0}, u_{0}) |
+    %     := \left| \int_{\mathcal{B}_{r}} u_{0}(w + x) dx - \int_{\mathcal{B}_{r}} u_{0}(w_{0} + x) dx \right|
+    %     \le \int_{\mathcal{B}_{r}} \left|u_{0}(w + x) - u_{0}(w_{0} + x) \right| dx 
+    %     \le \int_{\mathcal{B}_{r}} \frac{\epsilon}{\mathrm{Vol}(\mathcal{B}_{r})} dx
+    %     = \epsilon.
+    % \end{gather*}
+    \begin{gather*}
+        % | u_{0}(w) - u_{0}(w_0) | \le L || w - w_0 ||_{2} \\
+        | J[w, u_{0}] - J[w_{0}, u_{0}] |
+        := \left| \int_{\mathcal{B}_{r}} u_{0}(w + x) dx - \int_{\mathcal{B}_{r}} u_{0}(w_{0} + x) dx \right|
+        \le \int_{\mathcal{B}_{r}} \left|u_{0}(w + x) - u_{0}(w_{0} + x) \right| dx \\
+        \le \int_{\mathcal{B}_{r}} L || (w + x) - (w_{0} + x) ||_{2}
+        = L \mathrm{Vol}(\mathcal{B}_{r}) || w - w_{0} ||_{2}.
+    \end{gather*}
+    This demonstrates that $J(\cdot, u_{0})$ is Lipschitz continuous with Lipschitz constant $L \mathrm{Vol}(\mathcal{B}_{r})$, from which the proof is complete as Lipschitz continuity implies continuity. This also verifies the second subcondition of interest, namely of sequential continuity in the first argument.    
+    To see separate continuity in the second argument, we then appeal to the fact that a linear functional is continuous if and only if it is bounded, which follows immediately as:
+    \begin{gather*}
+        | J[w, u] |
+        := \left| \int_{\mathcal{B}_{r}(w)} u(x) dx \right|
+        \le \int_{\mathcal{B}_{r}(w)} \left| u(x) \right| dx
+        \le M \mathrm{Vol}(\mathcal{B}_{r}),
+    \end{gather*}
+    where $M := \max_{w\in\Omega} M(w) < \infty$ and $M(w) := \max_{x\in\mathcal{B}_{r}(w)} u(x) < \infty$ by the Lipschitz continuity of $u$. 
+    \item The proof of this property follows in the same manner as that of the previous property, namely by demonstrating separate continuity and appealing to the result of \Cref{lemma:joint_cts}. Explicitly writing the gradient expression, we have
+    \begin{gather*}
+        \nabla_{w} J[w, u]
+        := \nabla_{w} \int_{\mathcal{B}_{r}} u(w + x) dx
+        = \int_{\mathcal{B}_{r}} \nabla_{w} u(w + x) dx.
+    \end{gather*}
+    In this case, $X := \mathbb{R}^{d}$, again metrizable under the Euclidean metric, and $V = \mathcal{C}^{2}(\Omega,\mathbb{R})$ and $W = \mathbb{R}^{d}$, both of which are Fréchet spaces. In addition, $J(\cdot, u)$ remains a linear functional by linearity of the gradient:
+    \begin{gather*}
+        \nabla_{w} J[w, \alpha u_{1} + \beta u_{2}]
+        := \int_{\mathcal{B}_{r}} \nabla_{w} (\alpha u_{1} + \beta u_{2})(w + x) dx \\
+        = \alpha \int_{\mathcal{B}_{r}} \nabla_{w} u_{1}(w + x) dx + \beta \int_{\mathcal{B}_{r}} \nabla_{w} u_{2}(w + x) dx
+        = \alpha \nabla_{w} J[w, u_{1}] + \beta \nabla_{w} J[w, u_{2}].
+    \end{gather*} 
+    To demonstrate continuity in the first argument, we again proceed by leveraging that $\nabla_{w} u_{0}\in\mathcal{C}^{1}(\Omega,\mathbb{R}^{d})$, i.e. that $\nabla_{w} u_{0}$ itself is continuously differentiable. By standard results of differentiability, such multi-valued functions are continuously differentiable if and only if their components are continuously differentiable. Thus, the restricted map for each output component too is continuously differentiable and, hence, Lipschitz continuous. Denote then by $L_i$ the Lipschitz constant associated with each dimension $i=1,...,d$. The proof then follows, as
+    \begin{gather*}
+        \left|\left| \int_{\mathcal{B}_{r}} \nabla_{w} J[w, u_{0}] dx - \int_{\mathcal{B}_{r}} \nabla_{w} J(w_{0}, u_{0}) dx \right|\right|_{2}
+        \le \int_{\mathcal{B}_{r}} || \nabla_{w} u_{0}(w + x) - \nabla_{w} u_{0}(w_{0} + x) ||_{2} dx \\
+        = \int_{\mathcal{B}_{r}} \left(\sum_{i=1}^{d} | \partial_{w_{i}} u_{0}(w + x) - \partial_{w_{i}} u_{0}(w_{0} + x) |^{2}\right)^{1/2} dx
+        \le \int_{\mathcal{B}_{r}} \left(\sum_{i=1}^{d} L_{i}^{2} || w - w_{0} ||^{2}_{2}\right)^{1/2} dx \\
+        \le \left(\sum_{i=1}^{d} L_{i}^{2}\right)^{1/2} \mathrm{Vol}(\mathcal{B}_{r}) || w - w_{0} ||
+        =: L \mathrm{Vol}(\mathcal{B}_{r}) || w - w_{0} ||,
+        % := \left| \int_{\mathcal{B}_{r}} u_{0}(w + x) dx - \int_{\mathcal{B}_{r}} u_{0}(w_{0} + x) dx \right|
+        % \le \int_{\mathcal{B}_{r}} \left|u_{0}(w + x) - u_{0}(w_{0} + x) \right| dx \\
+        % \le \int_{\mathcal{B}_{r}} L || (w + x) - (w_{0} + x) ||_{2}
+        % = L \mathrm{Vol}(\mathcal{B}_{r}) || w - w_{0} ||_{2}.
+    \end{gather*}
+    where $L := \left(\sum_{i=1}^{d} L_{i}^{2}\right)^{1/2}$. This demonstrates that $J(\cdot, u_{0})$ is Lipschitz continuous with Lipschitz constant $L \mathrm{Vol}(\mathcal{B}_{r})$, from which the proof is complete as Lipschitz continuity implies continuity.
+
+    For the second argument, we again demonstrate boundedness, namely with:
+    \begin{gather*}
+        || \nabla_{w} J[w, u] ||_{2}
+        := \left|\left| \int_{\mathcal{B}_{r}} \nabla_{w} u(w + x) dx \right|\right|_{2}
+        \le \int_{\mathcal{B}_{r}} \left|\left| \nabla_{w} u(w + x) \right|\right|_{2} dx
+        \le M_{\nabla} \mathrm{Vol}(\mathcal{B}_{r}),
+    \end{gather*}
+    where similarly $M_{\nabla} := \max_{w\in\Omega} M_{\nabla}(w) < \infty$ and $M_{\nabla}(w) := \max_{x\in\mathcal{B}_{r}(w)} || \nabla_{x} u(x) ||_{2} < \infty$ exists by the Lipschitz continuity of $\nabla_{x} u$ as argued above.
+
+    To finally demonstrate the single-valued nature of $M(w)$, we demonstrate that $u^{*}(w)$ is uniquely defined. This condition is formally stated and proven in the lemma below, from which the proof is complete.
+
+    \begin{lemma}\label{lemma:unique_max}
+        Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, and $u_{\le}^{*}(w, \vec{u})$ be as given by \Cref{eqn:max_subproblem}. Then, for any $u\in\mathcal{H}^{\floor{s/2}-1}(\Omega)\neq u_{\le}^{*}(w, \vec{u})$ such that $|| u - u_{\theta} ||_{\floor{s/2}}\le\widehat{q}$, $J[w, u] < J[w, u_{\le}^{*}(w, \vec{u})]$.
+    \end{lemma}
+    \begin{proof}
+        This immediately follows as any linear functional has a unique maximizer on a strictly convex set, as we demonstrate subsequently. The strictly convexity of the feasible region follows as any norm ball, such as $\mathcal{U}(u_{\theta}) := \mathcal{B}^{||\cdot||_{\floor{s/2}}}_{\widehat{q}}[u_{\theta}]$ is strictly convex if defined under a norm induced by an inner product. By the Hilbert structure of $\mathcal{H}^{\floor{s/2}}(\Omega)$, this implies $\mathcal{U}(u_{\theta})$ is strictly convex therein. As strict convexity is preserved under compact embedding and $\mathcal{H}^{\floor{s/2}}(\Omega)$ can be compactly embedded in $\mathcal{H}^{\floor{s/2}-1}(\Omega)$, this demonstrates $\mathcal{U}(u_{\theta})$ is strictly convex in $\mathcal{H}^{\floor{s/2}-1}(\Omega)$.
+        
+        To demonstrate the initial claim, suppose we had $u\neq u_{\le}^{*}(w, \vec{u})$ such that $J[w, u] = J[w, u_{\le}^{*}(w, \vec{u})]$. By the strict convexity of $\mathcal{U}(u_{\theta})$, this would imply $u' := 1/2 (u + u_{\le}^{*}(w, \vec{u}))$ lies in the interior of $\mathcal{U}(u_{\theta})$. We then denote by $u_{\epsilon}$ the constant function $u_{\epsilon}(x) := \epsilon$ $\forall x\in\Omega$. Since $u'$ lies in the interior of $\mathcal{U}(u_{\theta})$, there exists some $\epsilon > 0$ such that $u_{\epsilon}' := u' + u_{\epsilon}\in\mathcal{U}(u_{\theta})$, further implying
+        \begin{gather*}
+            J[w, u_{\epsilon}']
+            := J[w, \frac{1}{2} (u + u_{\le}^{*}(w, \vec{u})) + u_{\epsilon}]\\
+            = \frac{1}{2} (J[w, u] + J[w, u_{\le}^{*}(w, \vec{u})] + J[w, u_{\epsilon}])
+            = J[w, u_{\le}^{*}(w, \vec{u})] + \frac{1}{2} J[w, u_{\epsilon}] > J[w, u_{\le}^{*}(w, \vec{u})],
+        \end{gather*}
+        contradicting the assumed maximization achieved by $u_{\le}^{*}(w, \vec{u})$, completing the proof.
+    \end{proof}
+\end{enumerate}
+\phantom\qedhere
+\end{proof}
+
+\section{Maximization Subproblem Lemmas}
+\subsection{Equality Reformulation}\label{section:equality_reformulation}
+\begin{lemma}
+    Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, and $u_{\le}^{*}(w, \vec{u})$ be as given by \Cref{eqn:max_subproblem}. Further, let:
+    \begin{equation}
+        \begin{aligned}
+            u_{=}^{*}(w, \vec{u}) := \max_{u\in\mathcal{H}^{\floor{s/2}-1}(\Omega)} \int_{\mathcal{B}_{r}(w)} u(x) dx\\
+            \mathrm{s.t.}\qquad \left|\left| \sum_{k=1}^{K} \vec{u}_{k} \phi_{k} - u \right|\right|_{\floor{s/2}} = \widehat{q}
+        \end{aligned}
+    \end{equation}
+    Then $J[w, u_{\le}^{*}(w, \vec{u})] = J[w, u_{=}^{*}(w, \vec{u})]$.
+\end{lemma}
+
+\begin{proof}
+    Suppose this were not the case, i.e. that we had a strict inequality $|| \widehat{u} - \mathcal{F}(\theta) || < \widehat{q}$. 
+    
+    To demonstrate the result, it suffices to demonstrate that there exists a $c > 1$ such that $c \widehat{u}$ too is feasible, from which the contradiction immediately follows from the linearity of the functional, trivially as:
+    \begin{gather*}
+        J[w, c \widehat{u}]
+        = c J[w, \widehat{u}]
+        > J[w, \widehat{u}].
+    \end{gather*}
+    Since we assume $\widehat{u}$ lies strictly in the interior of $\mathcal{C}(\theta)$, there must exist some $\epsilon > 0$ such that $\mathcal{B}^{||\cdot||_{s,\omega}}_{\epsilon}(\widehat{u})\subset\mathcal{C}(\theta)$. Notice then that we can take $c := 1 + \epsilon / 2|| \widehat{u} ||_{s,\omega}$, which must lie in this disk, as:
+    \begin{gather*}
+        || c \widehat{u} - \widehat{u} ||_{s,\omega}
+        := || (1 + \epsilon / 2|| \widehat{u} ||_{s,\omega}) \widehat{u} - \widehat{u} ||_{s,\omega}
+        = \frac{\epsilon}{2|| \widehat{u} ||_{s,\omega}} || \widehat{u} ||_{s,\omega}
+        = \frac{\epsilon}{2},
+        % = 1 < c < 1 + \epsilon / || \widehat{u} ||_{s,\omega}
+        % \implies 1-\epsilon / || \widehat{u} || > c > 1 + \epsilon / || \widehat{u} ||
+    \end{gather*}
+    demonstrating that the aforementioned $c > 1$ exists, from which we reach our desired conclusion. 
+\end{proof}
+
+\subsection{Calculus of Variations Reformulation}\label{section:calc_var_reform}
+% \begin{theorem}\label{thm:calc_var_reform}
+%     Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, $\{\phi_{k}\} : \Omega\subset\mathbb{R}^{d}\rightarrow\mathbb{R}$, $u^{*}(w, \vec{u}) : \Omega\rightarrow\mathbb{R}$ be as given by \Cref{lemma:equality_reformulation}, and
+%     \begin{equation}
+%     (\lambda^{*}(w, \vec{u}), u_{\mathcal{L}}(w, \vec{u})) :=
+%     \begin{cases}
+%         &\mathbbm{1}[x\in\mathcal{B}_{r}(w)] + 2\lambda
+%         \left((u-u_{\theta}) + \sum_{\alpha=1}^{s} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right)\right) = 0\\
+%         &\left|\left| u_{\theta} - u \right|\right|_{\floor{s/2}} = \widehat{q}
+%     \end{cases}
+%     \end{equation}
+%     where $u_{\theta} := \sum_{k=1}^{K} \vec{u}_{k} \phi_{k}$. Then, $u^{*}(w, \vec{u}) = u_{\mathcal{L}}(w, \vec{u})$.
+%     % Then, $J[w, u^{*}(w, \vec{u})] = J[w, u_{\mathcal{L}}(w, \vec{u})]$ for a $\lambda\ge0$.
+% \end{theorem}
+
+% \begin{proof}
+%     We proceed through this proof in three stages, first demonstrating the aforementioned point $u_{\mathcal{L}}(w, \vec{u})$ is an extremal point of the Lagrangian associated with this constrained optimization problem, followed by demonstrating that such an extremal point is necessarily a local maximizer again of the Lagrangian, and concluding by demonstrating that such a point is then necessarily a maximizer of the original constrained problem, for which there is only a single local maximizer in this setting, from which the proof is complete. For clarity, therefore, we similarly dissect the proof into the presentation of lemmas for the aforementioned subgoals.
+
+%     We suppress the dependence on $(w, \vec{u})$ for this exposition, as they remains fixed throughout the calculation. Similarly, we denote by $u_{\theta} := \sum_{k=1}^{K} \vec{u}_{k} \phi_{k}$, i.e. the function corresponding to the truncated spectral prediction. For notational convenience, we simply denote the nominal functional as $J[u]$ and the constraint as $F[u]$:
+%     \begin{equation*}
+%         J[u] := \int_{\mathcal{B}_{r}(w)} u(x) dx
+%         \qquad F[u] := \left|\left|u_{\theta}  - u \right|\right|_{\floor{s/2}}.
+%     \end{equation*}
+%     Notice we can re-express the functional of interest in standard calculus of variations form, namely as
+%     \begin{gather*}
+%         J[u]
+%         := \int_{\mathcal{B}_{r}(w)} u(x) dx 
+%         = \int_{\Omega} \underbrace{\mathbbm{1}[x\in\mathcal{B}_{r}(w)] u(x)}_{j(x,u,\partial u)} dx \\
+%         F[u] := \int_{\Omega} \underbrace{\sum_{\alpha=0}^{s} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta}\right)^{2}}_{f(x,u,\partial u,...,\partial^{s} u)} dx
+%     \end{gather*}
+%     The Lagrangian of \Cref{eqn:max_sub_eqversion} can then be expressed as
+%     \begin{equation}\label{eqn:variational_dual}
+%         \mathcal{L}[u, \lambda] := J[u] + \lambda (F[u] - \widehat{q})
+%         = \int_{\Omega} \left(\underbrace{\mathbbm{1}[x\in\mathcal{B}_{r}(w)] u(x) + \lambda\left(\sum_{\alpha=1}^{s} (-1)^{| \alpha |}(\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2} - \frac{\widehat{q}}{|\Omega|} \right)}_{L(x,u,\partial u,...,\partial^{s} u)} \right)dx,
+%     \end{equation}
+%     where $\lambda\in\mathbb{R}_{+}$. 
+
+%     \begin{lemma}\label{lemma:calc_var_max}
+%         % Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, and $u^{*}(w, \vec{u})$ be as given by \Cref{lemma:equality_reformulation} and $\mathcal{L}[u, \lambda]$ to be as defined in \Cref{eqn:variational_dual}. Let $u_{\mathcal{L}}(w, \vec{u})$ denote the solution to
+%         % \begin{equation}
+%         %     \mathbbm{1}[x\in\mathcal{B}_{r}(w)] + 2\lambda
+%         %     \left((u-u_{\theta}) + \sum_{\alpha=1}^{s} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right)\right) = 0
+%         % \end{equation}
+%         Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, $\{\phi_{k}\} : \Omega\subset\mathbb{R}^{d}\rightarrow\mathbb{R}$, $u^{*}(w, \vec{u}) : \Omega\rightarrow\mathbb{R}$, and $(\lambda^{*}(w, \vec{u}), u_{\mathcal{L}}(w, \vec{u}))\in\mathbb{R}_{+}\times\Omega\rightarrow\mathbb{R}$ be as defined in \Cref{thm:calc_var_reform}. Then, $u_{\mathcal{L}}(w, \vec{u})$ is a weak local maximum of $\mathcal{L}[u, \lambda^{*}]$.
+%     \end{lemma}
+    
+%     \begin{proof}
+%         For the aforementioned fixed $\lambda^{*}$, the Euler-Lagrange equation takes the form
+%         \begin{equation*}
+%             \left(\frac{dL}{du} + \sum_{\beta=1}^{s} (-1)^{| \beta |} \frac{\partial}{\partial x^{\beta}} \left(\frac{dL}{du^{\beta}}\right)\right)
+%             = \left(\frac{dj}{du} - \frac{d}{dx}\frac{dj}{du'}\right) + \lambda^{*} \left(\frac{df}{du} + \sum_{\beta=1}^{s} (-1)^{| \beta |} \frac{\partial}{\partial x^{\beta}} \left(\frac{df}{du^{\beta}}\right)\right) = 0.
+%         \end{equation*}
+%         Computation of the first term is straightforward as
+%         \begin{equation*}
+%             \frac{dj}{du} = \mathbbm{1}[x\in\mathcal{B}_{r}(w)]
+%             \qquad \frac{dj}{du'} = 0.
+%         \end{equation*}    
+%         % takes the following modified form:
+%         % \begin{equation}
+%         %     \frac{df}{du} + \sum_{\beta} (-1)^{| \beta |} \frac{\partial}{\partial x^{\beta}} \left(\frac{df}{du^{\beta}}\right) = 0
+%         %     % \\
+%         %     % \implies \frac{df}{du} - \frac{d}{dx}\frac{df}{du'} + \frac{d^{2}}{dx^{2}}\frac{df}{du''} = 0
+%         % \end{equation}
+%         % We now consider the full norm expression. The expectation is that the Euler-Lagrange equation for this constraint term is what will ultimately be identical, perhaps up to a scalar constant, to that derived in the 1D case:
+%         % \begin{gather*}
+%         %     \frac{df}{du} + \sum_{\beta=1}^{s} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \left(\frac{d^{\beta}f}{du^{\beta}}\right)
+%         % \end{gather*}
+%         For the constraint term, we consider each term separately for notational clarity:
+%         \begin{gather*}
+%             \frac{df}{du}
+%             = \frac{d}{du}\left(\sum_{\alpha=0}^{s} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta}\right)^{2}\right)
+%             = \frac{d}{du}\left(u - u_{\theta}\right)^{2}
+%             % = \sum_{\alpha=0}^{s} \left(2 \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta}\right)\left(\partial^{\alpha+1} u - \partial^{\alpha+1} u_{\theta}\right)  + \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta}\right)^{2} '\right)\\
+%             = 2(u-u_{\theta})\\
+%             \frac{d^{\beta}f}{du^{\beta}}
+%             = \frac{d^{\beta}}{du^{\beta}}\left(\sum_{\alpha=0}^{s} \left((\partial^{\alpha} u)^{2} - 2 \partial^{\alpha} u \partial^{\alpha} u_{\theta} + (\partial^{\alpha} u_{\theta})^2\right) \right)\\
+%             = \sum_{\alpha=0}^{s} \frac{d}{du^{\beta}}\left((\partial^{\alpha} u)^{2} - 2 \partial^{\alpha} u \partial^{\alpha} u_{\theta} + (\partial^{\alpha} u_{\theta})^2\right) 
+%             = \sum_{\alpha=0}^{s} 2 \delta_{\alpha\beta} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right) 
+%         \end{gather*}
+%         Evaluating this in the original expression, we are left with:
+%         \begin{gather*}
+%             \sum_{\beta=1}^{s} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \left(\frac{d^{\beta}f}{du^{\beta}}\right)
+%             = \sum_{\beta=1}^{s} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \sum_{\alpha=0}^{s} 2 \delta_{\alpha\beta} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right)  \\
+%             = 2 \sum_{\beta=1}^{s} \sum_{\alpha=0}^{s} \delta_{\alpha\beta} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right) 
+%             = 2 \sum_{\alpha=1}^{s} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right) 
+%         \end{gather*}
+%         The final Euler-Lagrange formulation, therefore, becomes:
+%         \begin{gather*}
+%             \left(\frac{dj}{du} - \frac{d}{dx}\frac{dj}{du'}\right) + \lambda^{*} \left(\frac{df}{du} - \frac{df}{dx}\frac{dj}{du'}\right) = 0\\
+%             \iff \mathbbm{1}[x\in\mathcal{B}_{r}(w)] + 2\lambda^{*}
+%             \left((u-u_{\theta}) + \sum_{\alpha=1}^{s} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right)\right) = 0.
+%         \end{gather*}
+%         By classical results of calculus of variations, the solution of this posited differential equation is necessarily a weak local extremal point of $\mathcal{L}[u, \lambda^{*}]$.
+%         % any stationary point of the posited functional optimization problem must satisfy this equation.
+%     % \end{proof}
+%     % \begin{lemma}\label{lemma:maximum_extrema}
+%     %     Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, $\{\phi_{k}\} : \Omega\subset\mathbb{R}^{d}\rightarrow\mathbb{R}$, $u^{*}(w, \vec{u}) : \Omega\rightarrow\mathbb{R}$, and $(\lambda^{*}, u_{\mathcal{L}})\in\mathbb{R}_{+}\times\Omega\rightarrow\mathbb{R}$ be as defined in \Cref{thm:calc_var_reform}. Then, $u_{\mathcal{L}}$ is a weak local maximum of $\mathcal{L}[u_{\mathcal{L}}, \lambda^{*}]$.
+%     % \end{lemma}
+%     % \begin{proof}
+%         To now demonstrate that this extremal point is in fact a local maximizer, we proceed by leveraging the following result from \cite{hounkonnou2011extremum}.
+        
+%         \begin{theorem}
+%             (Theorem 5.13 from \cite{hounkonnou2011extremum}) Let $\Lambda$ be a bounded connected subset of $X$. Suppose that $L \in \mathcal{C}^2(\Lambda \times \Omega, \mathbb{R})$, and $u$ is a weak local extremum for $\mathcal{F}$. If the matrix 
+%             \begin{equation}
+%                 A\left(x, u^{(s)}(x)\right) := \left[ A_{\beta_{1}\beta_{2}} \right]_{0 \leq \beta_{1}\beta_{2} \leq s}
+%                 \qquad\mathrm{where}\qquad
+%                 A_{\beta_{1}\beta_{2}} := \left[ \frac{\partial^2 L}{\partial u_{(\beta_{1})}[h] \partial u_{(\beta_{2})}[h']} \right]_{1 \leq h \leq p_k \atop 1 \leq h' \leq p_{k'}}
+%             \end{equation}
+%             is semi-negative definite for all $x \in \Lambda$, then $u$ is a weak local maximum.
+%         \end{theorem}
+        
+%         % We assume that an extremal point $(u^{*}, \lambda^{*})$ has been determined through the solution of the generalized Euler-Lagrange equation and that we simply wish to establish that such a point is a maximizer. 
+%         We, therefore, solely need to demonstrate that the conditions of this above-presented corollary are satisfied, for which we must explicitly provide the matrix $A\left(x, u^{(s)}(x)\right)$. For any $\beta_{1},\beta_{2}$ other than $\beta_{1} = \beta_{2} = 0$, we have:
+%         \begin{gather*}
+%             \frac{\partial^{\beta_{1}}}{\partial u^{\beta_{1}}}\frac{\partial^{\beta_{2}}}{\partial u^{\beta_{2}}} L
+%             := \frac{\partial^{\beta_{1}}}{\partial u^{\beta_{1}}}\frac{\partial^{\beta_{2}}}{\partial u^{\beta_{2}}} \left(\mathbbm{1}[x\in\mathcal{B}_{r}(w)] u(x) + \lambda^{*}\left(\sum_{\alpha=1}^{s} (-1)^{| \alpha |}(\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2} - \frac{\widehat{q}}{|\Omega|}\right)\right)\\
+%             = \frac{\partial^{\beta_{1}}}{\partial u^{\beta_{1}}}\left(\lambda^{*}\left(\sum_{\alpha=1}^{s} (-1)^{| \alpha |} \frac{\partial^{\beta_{2}}}{\partial u^{\beta_{2}}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2}\right)\right)
+%             = \frac{\partial^{\beta_{1}}}{\partial u^{\beta_{1}}}\left(2 \lambda^{*}\left(\sum_{\alpha=1}^{s}  (-1)^{| \alpha |} \delta_{\alpha\beta_{2}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})\right)\right)\\
+%             = 2 \lambda^{*} \sum_{\alpha=1}^{s}  (-1)^{| \alpha |} \delta_{\alpha\beta_{2}} \frac{\partial^{\beta_{1}}}{\partial u^{\beta_{1}}} \partial^{\alpha} u
+%             = 2 \lambda^{*} \sum_{\alpha=1}^{s}  (-1)^{| \alpha |} \delta_{\alpha\beta_{2}} \delta_{\alpha\beta_{1}}.
+%         \end{gather*}
+%         For $\beta_{1} = \beta_{2} = 0$, we have that this partial is simply 0, giving us:
+%         \begin{equation}
+%             A_{\beta_{1}\beta_{2}}
+%             = \begin{cases}
+%                 2\lambda^{*}\sum_{\alpha=1}^{s}  (-1)^{| \alpha |} \qquad&\beta_{1} = \beta_{2}\neq 0\\
+%                 0 \qquad&\beta_{1} = \beta_{2} = 0\text{ or }\beta_{1} \neq \beta_{2}
+%             \end{cases}
+%         \end{equation}
+%         $A$, therefore, is a diagonal matrix with a constant value on all but its $A_{00} = 0$ entry. It, thus, suffices to demonstrate this constant value is $\le 0$ to demonstrate that the matrix is negative semi-definite, as follows:
+%         \begin{gather*}
+%             \mathrm{sgn}\left(2\lambda^{*}\sum_{\alpha=1}^{s}  (-1)^{| \alpha |}\right)
+%             = \mathrm{sgn}\left(\sum_{\alpha=1}^{s}  (-1)^{| \alpha |}\right)
+%             = \begin{cases}
+%                 -1 \qquad &s \mod 2 = 1 \\
+%                 0 \qquad &\mathrm{o.w.}
+%             \end{cases},
+%         \end{gather*}
+%         where we use the fact that Lagrange multipliers satisfy $\lambda\ge0$. We, therefore, have that $A$ is a diagonal matrix for which all the entries are $\le0$, in turn demonstrating that it is negative semi-definite as desired, completing the proof. 
+%     \end{proof}
+%     We, therefore, have from \Cref{lemma:calc_var_max} that $u_{\mathcal{L}}$ is a weak local maximum of $\mathcal{L}[u, \lambda^{*}]$, implying further that $u_{\mathcal{L}}$ is a maximizer of the constrained formulation of \Cref{eqn:max_sub_eqversion} by standard results of equality-constrained Lagrangian solutions. To conclude, we then simply appeal to \Cref{lemma:unique_max}, in which it was demonstrated only one such maximizer exists, implying $u_{\mathcal{L}}$ is that maximizer, demonstrating $u^{*}(w, \vec{u}) = u_{\mathcal{L}}(w, \vec{u})$, as desired.
+% \end{proof}
+
+% \newpage
+\begin{theorem}\label{thm:calc_var_reform}
+    Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, $\{\phi_{k}\} : \Omega\subset\mathbb{R}^{d}\rightarrow\mathbb{R}$, $u^{*}(w, \vec{u}) : \Omega\rightarrow\mathbb{R}$ be as given by \Cref{lemma:equality_reformulation}, and
+    \begin{equation}
+    (\lambda^{*}(w, \vec{u}), u_{\mathcal{L}}(w, \vec{u})) :=
+    \begin{cases}
+        &\mathbbm{1}[x\in\mathcal{B}_{r}(w)] + 
+        2\lambda^{*} \left(\sum_{\alpha\in\Lambda_{\le s}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} (-1)^{|\alpha|} \frac{\partial^{|\alpha|}}{\partial x^{\alpha}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})\right)
+        = 0\\
+        &\left|\left| u_{\theta} - u \right|\right|_{\floor{s/2}} = \widehat{q}
+    \end{cases}
+    \end{equation}
+    where $\Lambda_{\le s}' := \{\beta\in\mathbb{N}^{d} : |\beta|\le s, \beta_{i}\le\beta_{j}\text{ }\forall i\le j \}$ and $u_{\theta} := \sum_{k=1}^{K} \vec{u}_{k} \phi_{k}$. Then, $u^{*}(w, \vec{u}) = u_{\mathcal{L}}(w, \vec{u})$.
+    % Then, $J[w, u^{*}(w, \vec{u})] = J[w, u_{\mathcal{L}}(w, \vec{u})]$ for a $\lambda\ge0$.
+\end{theorem}
+
+\begin{proof}
+    We proceed through this proof in three stages, first demonstrating the aforementioned point $u_{\mathcal{L}}(w, \vec{u})$ is an extremal point of the Lagrangian associated with this constrained optimization problem, followed by demonstrating that such an extremal point is necessarily a local maximizer again of the Lagrangian, and concluding by demonstrating that such a point is then necessarily a maximizer of the original constrained problem, for which there is only a single local maximizer in this setting, from which the proof is complete. For clarity, therefore, we similarly dissect the proof into the presentation of lemmas for the aforementioned subgoals.
+
+    We suppress the dependence on $(w, \vec{u})$ for this exposition, as they remains fixed throughout the calculation. Similarly, we denote by $u_{\theta} := \sum_{k=1}^{K} \vec{u}_{k} \phi_{k}$, i.e. the function corresponding to the truncated spectral prediction. For notational convenience, we simply denote the nominal functional as $J[u]$ and the constraint as $F[u]$:
+    \begin{equation*}
+        J[u] := \int_{\mathcal{B}_{r}(w)} u(x) dx
+        \qquad F[u] := \left|\left|u_{\theta}  - u \right|\right|_{\floor{s/2}}.
+    \end{equation*}
+    Notice we can re-express the functional of interest in standard calculus of variations form, namely as
+    \begin{gather*}
+        J[u]
+        := \int_{\mathcal{B}_{r}(w)} u(x) dx 
+        = \int_{\Omega} \underbrace{\mathbbm{1}[x\in\mathcal{B}_{r}(w)] u(x)}_{j(x,u,\partial u)} dx \\
+        F[u] := \int_{\Omega} \underbrace{\sum_{\alpha\in\Lambda_{\le \floor{s/2}}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2}}_{f\left(x,\{\partial^{\alpha} u\}_{\alpha\in\Lambda_{\le \floor{s/2}}}\right)} dx
+    \end{gather*}
+    The Lagrangian of \Cref{eqn:max_sub_eqversion} can then be expressed as
+    \begin{equation}\label{eqn:variational_dual}
+        \mathcal{L}[u, \lambda] := J[u] + \lambda (F[u] - \widehat{q})
+        = \int_{\Omega} \left(\underbrace{\mathbbm{1}[x\in\mathcal{B}_{r}(w)] u(x) + \lambda\left(\sum_{\alpha\in\Lambda_{\le \floor{s/2}}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2} - \frac{\widehat{q}}{|\Omega|} \right)}_{L\left(x,\{\partial^{\alpha} u\}_{\alpha\in\Lambda_{\le \floor{s/2}}}\right)} \right)dx,
+    \end{equation}
+    where $\lambda\in\mathbb{R}_{+}$. 
+
+    \begin{lemma}\label{lemma:calc_var_max}
+        % Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, and $u^{*}(w, \vec{u})$ be as given by \Cref{lemma:equality_reformulation} and $\mathcal{L}[u, \lambda]$ to be as defined in \Cref{eqn:variational_dual}. Let $u_{\mathcal{L}}(w, \vec{u})$ denote the solution to
+        % \begin{equation}
+        %     \mathbbm{1}[x\in\mathcal{B}_{r}(w)] + 2\lambda
+        %     \left((u-u_{\theta}) + \sum_{\alpha=1}^{\floor{s/2}} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right)\right) = 0
+        % \end{equation}
+        Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, $\{\phi_{k}\} : \Omega\subset\mathbb{R}^{d}\rightarrow\mathbb{R}$, $u^{*}(w, \vec{u}) : \Omega\rightarrow\mathbb{R}$, and $(\lambda^{*}(w, \vec{u}), u_{\mathcal{L}}(w, \vec{u}))\in\mathbb{R}_{+}\times\Omega\rightarrow\mathbb{R}$ be as defined in \Cref{thm:calc_var_reform}. Then, $u_{\mathcal{L}}(w, \vec{u})$ is a weak local maximum of $\mathcal{L}[u, \lambda^{*}]$.
+    \end{lemma}
+    
+    \begin{proof}
+        For the aforementioned fixed $\lambda^{*}$, the Euler-Lagrange equation takes the form
+        \begin{gather*}
+            % \left(\frac{dL}{du} + \sum_{\beta=1}^{\floor{s/2}} (-1)^{| \beta |} \frac{\partial}{\partial x^{\beta}} \left(\frac{dL}{du^{\beta}}\right)\right)
+            % = 
+            \left(\frac{dj}{du} - \frac{d}{dx}\frac{dj}{du'}\right) + \lambda^{*} 
+            % \left(\frac {\partial {f}}{\partial u}+\sum _{j=1}^{n}\sum _{\beta _{1}\leq \ldots \leq \beta _{j}}(-1)^{j}{\frac {\partial ^{j}}{\partial x_{\beta _{1}}\dots \partial x_{\beta _{j}}}}\left({\frac {\partial {f}}{\partial u_{\beta _{1}\dots \beta _{j}}}}\right)\right) = 0.
+            \left(\sum_{\beta\in\Lambda_{\le \floor{s/2}}'} (-1)^{|\beta|} \frac{\partial^{|\beta|}}{\partial x^{\beta}}
+            % \frac{\partial^{|\beta|}}{\partial^{\beta_{1}}_{x_{1}}...\partial^{\beta_{d}}_{x_{d}}}
+            \left({\frac {\partial^{|\beta|} {f}}{\partial u^{\beta}}}\right)\right) = 0,\\
+            \Lambda_{\le \floor{s/2}}' := \{\beta\in\mathbb{N}^{d} : |\beta|\le \floor{s/2}, \beta_{i}\le\beta_{j} \quad\forall i\le j \}.
+        \end{gather*}
+        Critically, unlike $\Lambda_{\le \floor{s/2}}$, $\Lambda_{\le \floor{s/2}}'$ does \textit{not} include permutations of mixed partials, i.e. if $d=2$, $\Lambda_{\le 2}'$, we only include $\partial^{1}_{1}\partial^{1}_{2}$ and \textit{not} $\partial^{1}_{2}\partial^{1}_{1}$, whereas $\Lambda_{\le 2}$ includes both, dicussed in the subsequent calculations.
+        
+        We now proceed through the computation. Computation of the first term is straightforward as
+        \begin{equation*}
+            \frac{dj}{du} = \mathbbm{1}[x\in\mathcal{B}_{r}(w)]
+            \qquad \frac{dj}{du'} = 0.
+        \end{equation*}    
+        % takes the following modified form:
+        % \begin{equation}
+        %     \frac{df}{du} + \sum_{\beta} (-1)^{| \beta |} \frac{\partial}{\partial x^{\beta}} \left(\frac{df}{du^{\beta}}\right) = 0
+        %     % \\
+        %     % \implies \frac{df}{du} - \frac{d}{dx}\frac{df}{du'} + \frac{d^{2}}{dx^{2}}\frac{df}{du''} = 0
+        % \end{equation}
+        % We now consider the full norm expression. The expectation is that the Euler-Lagrange equation for this constraint term is what will ultimately be identical, perhaps up to a scalar constant, to that derived in the 1D case:
+        % \begin{gather*}
+        %     \frac{df}{du} + \sum_{\beta=1}^{\floor{s/2}} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \left(\frac{d^{\beta}f}{du^{\beta}}\right)
+        % \end{gather*}        
+        For the constraint term, we first re-express the sum in terms of $\Lambda'$ instead of $\Lambda$:
+        \begin{gather*}
+            \sum_{\alpha\in\Lambda_{\le \floor{s/2}}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2}
+            = \sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2}
+        \end{gather*} 
+        % We now consider each term of Euler-Lagrange separately for notational clarity:
+        % \begin{gather*}
+        %     \frac{df}{du}
+        %     = \frac{d}{du}\left(\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} \left((\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2} - \frac{\widehat{q}}{|\Omega|}\right)\right)
+        %     = \frac{d}{du}\left(u - u_{\theta}\right)^{2}
+        %     = 2(u-u_{\theta})
+        % \end{gather*}
+        Now consider some fixed $\beta\in\Lambda_{\le \floor{s/2}}'$, for which we have
+        \begin{gather*}
+            % = \sum_{\alpha=0}^{\floor{s/2}} \left(2 \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta}\right)\left(\partial^{\alpha+1} u - \partial^{\alpha+1} u_{\theta}\right)  + \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta}\right)^{2} '\right)\\
+            \frac{\partial^{|\beta|}f}{\partial u^{\beta}}
+            = \frac{\partial^{|\beta|}}{\partial u^{\beta}}\left(\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2} - \frac{\widehat{q}}{|\Omega|}\right)\\
+            = \sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} \frac{\partial^{|\beta|}}{\partial u^{\beta}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2}
+            = \sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} 2 \delta_{\alpha\beta} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!}(\partial^{\alpha} u - \partial^{\alpha} u_{\theta})
+            % = \sum_{\alpha=0}^{\floor{s/2}} \frac{d}{du^{\beta}}\left((\partial^{\alpha} u)^{2} - 2 \partial^{\alpha} u \partial^{\alpha} u_{\theta} + (\partial^{\alpha} u_{\theta})^2\right) 
+            % = \sum_{\alpha=0}^{\floor{s/2}} 2 \delta_{\alpha\beta} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right) 
+        \end{gather*}
+        Evaluating this in the full Euler-Lagrange term gives
+        \begin{gather*}
+            \sum_{\beta\in\Lambda_{\le \floor{s/2}}'} (-1)^{|\beta|} \frac{\partial^{|\beta|}}{\partial x^{\beta}}
+            \left({\frac {\partial^{|\beta|} {f}}{\partial u^{\beta}}}\right)
+            = \sum_{\beta\in\Lambda_{\le \floor{s/2}}'} (-1)^{|\beta|} \frac{\partial^{|\beta|}}{\partial x^{\beta}}
+            \left(\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} 2 \delta_{\alpha\beta} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!}(\partial^{\alpha} u - \partial^{\alpha} u_{\theta})\right)\\
+            = \sum_{\beta\in\Lambda_{\le \floor{s/2}}'} \sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} 2 \delta_{\alpha\beta} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} (-1)^{|\beta|} \frac{\partial^{|\beta|}}{\partial x^{\beta}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})
+            = 2 \sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} (-1)^{|\alpha|} \frac{\partial^{|\alpha|}}{\partial x^{\alpha}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})
+            % \sum_{\beta=1}^{\floor{s/2}} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \left(\frac{d^{\beta}f}{du^{\beta}}\right)
+            % = \sum_{\beta=1}^{\floor{s/2}} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \sum_{\alpha=0}^{\floor{s/2}} 2 \delta_{\alpha\beta} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right)  \\
+            % = 2 \sum_{\beta=1}^{\floor{s/2}} \sum_{\alpha=0}^{\floor{s/2}} \delta_{\alpha\beta} (-1)^{\beta} \frac{\partial}{\partial x^{\beta}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right) 
+            % = 2 \sum_{\alpha=1}^{\floor{s/2}} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right) 
+        \end{gather*}
+        The final Euler-Lagrange formulation, therefore, becomes:
+        \begin{gather*}
+            \left(\frac{dj}{du} - \frac{d}{dx}\frac{dj}{du'}\right) + \lambda^{*} \left(\sum_{\beta\in\Lambda_{\le \floor{s/2}}'} (-1)^{|\beta|} \frac{\partial^{|\beta|}}{\partial x^{\beta}}
+            \left({\frac {\partial^{|\beta|} {f}}{\partial u^{\beta}}}\right)\right) = 0\\
+            \iff \mathbbm{1}[x\in\mathcal{B}_{r}(w)] + 
+            2\lambda^{*} \left(\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} (-1)^{|\alpha|} \frac{\partial^{|\alpha|}}{\partial x^{\alpha}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})\right)
+            = 0.
+            % \left((u-u_{\theta}) + \sum_{\alpha=1}^{\floor{s/2}} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta} \right)\right) = 0.
+        \end{gather*}
+        By classical results of calculus of variations, the solution of this posited differential equation is necessarily a weak local extremal point of $\mathcal{L}[u, \lambda^{*}]$.
+        % any stationary point of the posited functional optimization problem must satisfy this equation.
+    % \end{proof}
+    % \begin{lemma}\label{lemma:maximum_extrema}
+    %     Let $w\in\mathbb{R}^{d}$, $\vec{u}\in\mathbb{R}^{K}$, $\{\phi_{k}\} : \Omega\subset\mathbb{R}^{d}\rightarrow\mathbb{R}$, $u^{*}(w, \vec{u}) : \Omega\rightarrow\mathbb{R}$, and $(\lambda^{*}, u_{\mathcal{L}})\in\mathbb{R}_{+}\times\Omega\rightarrow\mathbb{R}$ be as defined in \Cref{thm:calc_var_reform}. Then, $u_{\mathcal{L}}$ is a weak local maximum of $\mathcal{L}[u_{\mathcal{L}}, \lambda^{*}]$.
+    % \end{lemma}
+    % \begin{proof}
+        To now demonstrate that this extremal point is in fact a local maximizer, we proceed by leveraging the following result from \cite{hounkonnou2011extremum}.
+        
+        \begin{theorem}
+            (Theorem 5.13 from \cite{hounkonnou2011extremum}) Let $\Lambda$ be a bounded connected subset of $X$. Suppose that $L \in \mathcal{C}^2(\Lambda \times \Omega, \mathbb{R})$, and $u$ is a weak local extremum for $\mathcal{F}$. If the matrix 
+            \begin{equation}
+                A := \left[ A_{\beta_{1}\beta_{2}} \right]_{0 \leq \beta_{1}\beta_{2} \leq \floor{s/2}}
+                \qquad\mathrm{where}\qquad
+                A_{\beta_{1}\beta_{2}} := \left[ \frac{\partial^2 L}{\partial u_{(\beta_{1})}[h] \partial u_{(\beta_{2})}[h']} \right]_{1 \leq h \leq p_k \atop 1 \leq h' \leq p_{k'}}
+            \end{equation}
+            is semi-negative definite for all $x \in \Lambda$, then $u$ is a weak local maximum.
+        \end{theorem}
+        
+        % We assume that an extremal point $(u^{*}, \lambda^{*})$ has been determined through the solution of the generalized Euler-Lagrange equation and that we simply wish to establish that such a point is a maximizer. 
+        We, therefore, solely need to demonstrate that the conditions of this above-presented corollary are satisfied, for which we must explicitly provide the matrix $A$. For any $\beta_{1},\beta_{2}$, we have:
+        \begin{gather*}
+            % \frac{\partial^{|\beta|}f}{\partial u^{\beta}}
+            % = \frac{\partial^{|\beta|}}{\partial u^{\beta}}\left(\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} \left((\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2} - \frac{\widehat{q}}{|\Omega|}\right) \right)\\
+            % = \sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} \frac{\partial^{|\beta|}}{\partial u^{\beta}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2}
+            % = \sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} 2 \delta_{\alpha\beta} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!}(\partial^{\alpha} u - \partial^{\alpha} u_{\theta})
+            \frac{\partial^{|\beta_{1}|}}{\partial u^{\beta_{1}}}\frac{\partial^{|\beta_{2}|}}{\partial u^{\beta_{2}}} L
+            := \frac{\partial^{|\beta_{1}|}}{\partial u^{\beta_{1}}}\frac{\partial^{|\beta_{2}|}}{\partial u^{\beta_{2}}} \left(\mathbbm{1}[x\in\mathcal{B}_{r}(w)] u(x) + \lambda^{*}\left(\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2} - \frac{\widehat{q}}{|\Omega|}\right)\right)\\
+            = \lambda^{*}\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} \frac{\partial^{|\beta_{1}|}}{\partial u^{\beta_{1}}} \left(\frac{\partial^{|\beta_{2}|}}{\partial u^{\beta_{2}}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})^{2}\right)
+            = \lambda^{*}\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!} \frac{\partial^{|\beta_{1}|}}{\partial u^{\beta_{1}}} \left(2 \delta_{\alpha \beta_{2}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})\right)\\
+            = 2 \lambda^{*}\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \delta_{\alpha \beta_{1}} \delta_{\alpha \beta_{2}} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!}
+            % = \frac{\partial^{|\beta_{1}|}}{\partial u^{\beta_{1}}}\left(2 \lambda^{*}\left(\sum_{\alpha=1}^{\floor{s/2}}  (-1)^{| \alpha |} \delta_{\alpha\beta_{2}} (\partial^{\alpha} u - \partial^{\alpha} u_{\theta})\right)\right)\\
+            % = 2 \lambda^{*} \sum_{\alpha=1}^{\floor{s/2}}  (-1)^{| \alpha |} \delta_{\alpha\beta_{2}} \frac{\partial^{|\beta_{1}|}}{\partial u^{\beta_{1}}} \partial^{\alpha} u
+            % = 2 \lambda^{*} \sum_{\alpha=1}^{\floor{s/2}}  (-1)^{| \alpha |} \delta_{\alpha\beta_{2}} \delta_{\alpha\beta_{1}}.
+        \end{gather*}
+        Denoting $\Gamma := 2 \lambda^{*}\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!}$, we, therefore, have that
+        \begin{equation}
+            A_{\beta_{1}\beta_{2}}
+            = \begin{cases}
+                \Gamma \qquad&\beta_{1} = \beta_{2} \\
+                0 \qquad&\beta_{1} \neq \beta_{2}
+            \end{cases}
+            \implies
+            A = \Gamma\cdot\mathcal{I}_{|\Lambda_{\le \floor{s/2}}'|\times|\Lambda_{\le \floor{s/2}}'|}.
+        \end{equation}
+        % $A$, therefore, is a diagonal matrix with a constant value on all but its $A_{00} = 0$ entry. 
+        It, thus, suffices to demonstrate $\Gamma\le 0$ to demonstrate that $A$ is negative semi-definite, which follows as:
+        \begin{gather*}
+            \mathrm{sgn}\left(\Gamma\right)
+            = \mathrm{sgn}\left(2 \lambda^{*}\sum_{\alpha\in\Lambda_{\le \floor{s/2}}'} \frac{| \alpha |!}{\prod_{j=1}^{d} \alpha_{j}!}\right)
+            = \mathrm{sgn}(\lambda^{*}).
+            % \begin{cases}
+            %     -1 \qquad &\floor{s/2} \mod 2 = 1 \\
+            %     0 \qquad &\mathrm{o.w.}
+            % \end{cases},
+        \end{gather*}
+        % where we use the fact that Lagrange multipliers satisfy $\lambda\ge0$. 
+        Since we assumed that $\lambda^{*} < 0$, we have that $A$ is negative semi-definite as desired, completing the proof. 
+
+        % Need to figure out how multipliers fit into the sufficiency story: is PSD enough -- seems like it is for some reason? and also, is there a bordered Hessian equivalent for calc of var? 
+    \end{proof}
+    We, therefore, have from \Cref{lemma:calc_var_max} that $u_{\mathcal{L}}$ is a weak local maximum of $\mathcal{L}[u, \lambda^{*}]$, implying further that $u_{\mathcal{L}}$ is a maximizer of the constrained formulation of \Cref{eqn:max_sub_eqversion} by standard results of equality-constrained Lagrangian solutions. To conclude, we then simply appeal to \Cref{lemma:unique_max}, in which it was demonstrated only one such maximizer exists, implying $u_{\mathcal{L}}$ is that maximizer, demonstrating $u^{*}(w, \vec{u}) = u_{\mathcal{L}}(w, \vec{u})$, as desired.
+\end{proof}
+
+\newpage
+\subsection{Spectral Solution of Euler-Lagrange}\label{section:euler_lagrange_spectral}
+Recall that the functions of interest lend themselves to spectral decompositions $u := \sum_k u_k \phi_k$ and similarly for $u_{\theta}$. We denote the expansion of $u - u_{\theta} = \sum_{k} (u_k - u_{k;\theta}) \phi_k =: \sum_{k} \Delta_k \phi_k$ for simplicity. In addition, derivatives of basis elements themselves can be spectrally decomposed analytically, namely with
+\begin{gather*}
+    \frac{d^p}{dx^p} \phi_n(x) = 2^p n \sum_{\substack{0 \leq k \leq n-p \\ k = n-p \ (\mathrm{mod} \ 2)}}' \binom{\frac{n+p-k}{2} - 1}{\frac{n-p-k}{2}} \frac{\left(\frac{n+p+k}{2} - 1\right)!}{\left(\frac{n-p+k}{2}\right)!} \phi_k(x), \quad p \geq 1,
+\end{gather*}
+where the summation tick mark indicates that the term indicating to $k=0$ is to be halved. For notational simplicity, we condense this result as $\partial^{\alpha} \phi_{k} = \sum_{j < k} c_{jk}(\alpha) \phi_{j}$. Using this expression, we rewrite the second term of the Euler-Lagrange equation as follows
+\begin{gather*}
+    \sum_k \Delta_{k} \phi_k + 
+    \sum_{\alpha=1}^{s} (-1)^{\alpha} \sum_k \Delta_{k} \frac{\partial}{\partial x^{\alpha}} \phi_k
+    = \sum_k \Delta_{k} \phi_k + 
+    \sum_{\alpha=1}^{s} (-1)^{\alpha} \sum_k \Delta_{k} \sum_{j < k} c_{jk}(\alpha) \phi_{j}\\
+    = \sum_k \Delta_{k} \phi_k + 
+    \sum_{\alpha=1}^{s} (-1)^{\alpha} \sum_j \underbrace{\sum_{k\ge j} \Delta_{k} c_{jk}(\alpha)}_{c_{j}'(\alpha)} \phi_{j}
+    = \sum_k \Delta_{k} \phi_k + 
+    \sum_{\alpha=1}^{s} (-1)^{\alpha} \sum_k c_{k}'(\alpha) \phi_{k}
+    = \sum_k \Delta_{k} \phi_k + 
+    \sum_k \underbrace{\sum_{\alpha=1}^{s} (-1)^{\alpha} c_{k}'(\alpha)}_{\gamma_{k}} \phi_{k}
+    % = \sum_k (\Delta_{k} + \gamma_{k}) \phi_{k}
+\end{gather*}
+where we relabel the dummy index from $j$ to $k$ in the penultimate step. Therefore, the full Euler-Lagrange equation can be solved by finding the corresponding expansion of $\mathbbm{1}[x\in\mathcal{B}_{r}(w)]$. This expression is a discontinuous function, so we consider a $\mathcal{C}^{\infty}$-smooth bump function surrogate $\imath$ and denote its spectral decomposition as $\sum_k \imath_{k} \phi_{k}$. Solving this spectral setup gives the desired expression for $u$:
+\begin{gather*}
+    \mathbbm{1}[x\in\mathcal{B}_{r}(w)] + 2\lambda
+    \left((u-u_{\theta}) + \sum_{\alpha=1}^{s} (-1)^{\alpha} \frac{\partial}{\partial x^{\alpha}} \left(\partial^{\alpha} u - \partial^{\alpha} u_{\theta}\right)\right) = 0
+    \iff \sum_k \frac{-\imath_{k}}{2\lambda} \phi_{k} = \sum_k (\Delta_{k} + \gamma_{k}) \phi_{k}.
+\end{gather*}
+We can, therefore, find the final solution for $u$ by equating and solving for $\{u_k\}$ in $-\frac{\imath_{k}}{2\lambda} = \Delta_{k} + \gamma_{k}$.
+
+\end{document}

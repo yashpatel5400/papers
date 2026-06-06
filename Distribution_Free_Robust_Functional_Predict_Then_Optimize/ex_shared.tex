@@ -1,0 +1,122 @@
+% SIAM Shared Information Template
+% This is information that is shared between the main document and any
+% supplement. If no supplement is required, then this information can
+% be included directly in the main document.
+
+
+% Packages and macros go here
+\usepackage{lipsum}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{algorithm}      % for floating algorithm environment
+\usepackage{algpseudocode}  % for the algorithmicx syntax (\State, \While, etc.)
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{subcaption}
+\usepackage[scr=rsfs]{mathalpha}
+\usepackage{multirow}
+\usepackage{bbm}
+\usepackage{longtable,booktabs}
+\ifpdf
+  \DeclareGraphicsExtensions{.eps,.pdf,.png,.jpg}
+\else
+  \DeclareGraphicsExtensions{.eps}
+\fi
+
+% Prevent itemized lists from running into the left margin inside theorems and proofs
+\usepackage{outlines}
+\usepackage{enumitem}
+\setlist[enumerate]{leftmargin=.5in}
+\setlist[itemize]{leftmargin=.5in}
+
+% Add a serial/Oxford comma by default.
+\newcommand{\creflastconjunction}{, and~}
+
+% Used for creating new theorem and remark environments
+\newsiamremark{assumption}{Assumption}
+\newsiamremark{remark}{Remark}
+\newsiamremark{hypothesis}{Hypothesis}
+\crefname{hypothesis}{Hypothesis}{Hypotheses}
+\newsiamthm{claim}{Claim}
+
+% Sets running headers as well as PDF title and authors
+\headers{Distribution-Free Robust Predict-Then-Optimize in Function Spaces}{Y. Patel and A. Tewari}
+
+% Title. If the supplement option is on, then "Supplementary Material"
+% is automatically inserted before the title.
+\title{Distribution-Free Robust Predict-Then-Optimize in Function Spaces\thanks{Submitted to the editors Feb 8, 2026.
+\funding{We acknowledge the support of NSF via grant DMS-2413089.}}}
+
+% Authors: full names plus addresses.
+\author{Yash Patel\thanks{University of Michigan, Ann Arbor, MI 
+  (\email{yppatel@umich.edu}).}
+\and Ambuj Tewari\thanks{University of Michigan, Ann Arbor, MI 
+  (\email{tewaria@umich.edu}).}}
+
+\usepackage{subcaption} % in your preamble
+
+\usepackage{amsopn}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator{\logit}{logit}
+\DeclarePairedDelimiter{\ceil}{\lceil}{\rceil}
+\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}
+\newcommand{\indep}{\perp \!\!\! \perp}
+
+% User-defined shortcuts
+\newcommand{\rtwo}{\mathbb{R}^2}
+\newcommand{\rone}{\mathbb{R}}
+\newcommand{\qone}{\mathbb{Q}}
+\newcommand{\qtwo}{\mathbb{Q}^2}
+\newcommand{\nat}{\mathbb{N}}
+\newcommand{\ex}{\mathbb{E}}
+\newcommand{\rt}{\rightarrow}
+\newcommand{\lt}{\leftarrow}
+\newcommand{\cW}{\mathcal{W}}
+\newcommand{\cU}{\mathcal{U}}
+\newcommand{\cE}{\mathcal{E}}
+\newcommand{\cC}{\mathcal{C}}
+\newcommand{\T}{\top}
+\newcommand{\normal}{\mathcal{N}}
+\newcommand{\vor}{\mathcal{V}}
+\newcommand{\st}{\mid}
+\newcommand{\abs}[1]{\left|#1\right|}
+\newcommand{\set}[1]{\left\{#1\right\}}
+\newcommand{\norm}[1]{\left\lVert #1\right\rVert}
+\newcommand{\obar}[1]{\overline{#1}}
+\newcommand{\cov}{\text{cov}}
+
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
+\crefname{subsection}{Section}{Sections}
+\Crefname{subsection}{Section}{Sections}
+\crefname{subsubsection}{Section}{Sections}
+\Crefname{subsubsection}{Section}{Sections}
+\crefname{assumption}{Assumption}{Assumptions}
+\Crefname{assumption}{Assumption}{Assumptions}
+
+%%%% HELPER CODE FOR DEALING WITH EXTERNAL REFERENCES ON OVERLEAF
+% (from an answer by cyberSingularity at http://tex.stackexchange.com/a/69832/226)
+%%%
+\makeatletter
+\newcommand*{\addFileDependency}[1]{% argument=file name and extension
+  \typeout{(#1)}% latexmk will find this if $recorder=0 (however, in that case, it will ignore #1 if it is a .aux or .pdf file etc and it exists! if it doesn't exist, it will appear in the list of dependents regardless)
+  \@addtofilelist{#1}% if you want it to appear in \listfiles, not really necessary and latexmk doesn't use this
+  \IfFileExists{#1}{}{\typeout{No file #1.}}% latexmk will find this message if #1 doesn't exist (yet)
+}
+\makeatother
+
+\newcommand*{\myexternaldocument}[1]{%
+    \externaldocument{#1}%
+    \addFileDependency{#1.tex}%
+    \addFileDependency{#1.aux}%
+}
+%%% END HELPER CODE
+
+%%% Local Variables: 
+%%% mode:latex
+%%% TeX-master: "ex_article"
+%%% End: 
